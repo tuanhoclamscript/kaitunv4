@@ -4870,97 +4870,119 @@ function RaidRefreshInventory()
 	return true
 end
 
-local UNDER_1M_FRUITS_FALLBACK = {
-	{ Name = "Rocket-Rocket", Alt = "Rocket Fruit", Price = 5000 },
-	{ Name = "Spin-Spin", Alt = "Spin Fruit", Price = 7500 },
-	{ Name = "Blade-Blade", Alt = "Blade Fruit", Price = 30000 },
-	{ Name = "Spring-Spring", Alt = "Spring Fruit", Price = 60000 },
-	{ Name = "Bomb-Bomb", Alt = "Bomb Fruit", Price = 80000 },
-	{ Name = "Smoke-Smoke", Alt = "Smoke Fruit", Price = 100000 },
-	{ Name = "Spike-Spike", Alt = "Spike Fruit", Price = 180000 },
-	{ Name = "Flame-Flame", Alt = "Flame Fruit", Price = 250000 },
-	{ Name = "Falcon-Falcon", Alt = "Falcon Fruit", Price = 300000 },
-	{ Name = "Ice-Ice", Alt = "Ice Fruit", Price = 350000 },
-	{ Name = "Sand-Sand", Alt = "Sand Fruit", Price = 420000 },
-	{ Name = "Dark-Dark", Alt = "Dark Fruit", Price = 500000 },
-	{ Name = "Diamond-Diamond", Alt = "Diamond Fruit", Price = 600000 },
-	{ Name = "Light-Light", Alt = "Light Fruit", Price = 650000 },
-	{ Name = "Rubber-Rubber", Alt = "Rubber Fruit", Price = 750000 },
-	{ Name = "Barrier-Barrier", Alt = "Barrier Fruit", Price = 800000 },
-	{ Name = "Ghost-Ghost", Alt = "Ghost Fruit", Price = 940000 },
-	{ Name = "Magma-Magma", Alt = "Magma Fruit", Price = 960000 },
-}
-
--- Lay danh sach fruit trong inventory co gia < 1M beli, sort tang dan
-function RaidGetUnder1MFruits()
-	local fruits = {}
+-- Quet chinh xac cac trai hien co trong Inventory Storage cua nguoi choi co gia < 1M Beli
+function RaidGetOwnedUnder1MFruits()
+	local ownedFruits = {}
 	local seen = {}
 
-	-- 1. Uu tien doc truc tiep tu server remote getInventoryFruits
+	-- Helper tinh gia tri trai dua vao ten
+	local function resolveFruitValue(name, rawValue)
+		local val = tonumber(rawValue) or 0
+		if val > 0 then return val end
+		local fName = normalizeRaidFruitName(name)
+		return RAID_FRUIT_VALUES[fName] or 999999
+	end
+
+	-- Helper them trai vao danh sach
+	local function addFruit(rawName, rawPrice, count)
+		local cleanName = tostring(rawName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if cleanName == "" then return end
+		local fName = normalizeRaidFruitName(cleanName)
+		if fName == "" then return end
+		local price = resolveFruitValue(fName, rawPrice)
+		if price < 1000000 and not seen[fName] then
+			seen[fName] = true
+			table.insert(ownedFruits, {
+				Name = cleanName,
+				CleanName = fName,
+				Value = price,
+				Count = tonumber(count) or 1
+			})
+		end
+	end
+
+	-- 1. Check server remote: getInventoryFruits (tra ve danh sach trai dang co trong kho)
 	pcall(function()
-		local serverFruits = CommF_:InvokeServer("getInventoryFruits")
-		if type(serverFruits) == "table" and #serverFruits > 0 then
-			for _, item in ipairs(serverFruits) do
-				local rawName = type(item) == "table" and (item.Name or item.name or "") or tostring(item)
-				local fruitName = normalizeRaidFruitName(rawName)
-				local value = type(item) == "table" and (tonumber(item.Price) or tonumber(item.Value) or tonumber(item.value) or RAID_FRUIT_VALUES[fruitName] or 0) or (RAID_FRUIT_VALUES[fruitName] or 0)
-				local count = type(item) == "table" and (tonumber(item.Count) or tonumber(item.count) or 1) or 1
-				if fruitName ~= "" and (value == 0 or value < 1000000) and not seen[fruitName] then
-					seen[fruitName] = true
-					fruits[#fruits + 1] = {
-						Name = rawName,
-						Value = value > 0 and value or (RAID_FRUIT_VALUES[fruitName] or 50000),
-						Count = count,
-					}
+		local res = CommF_:InvokeServer("getInventoryFruits")
+		if type(res) == "table" then
+			for _, item in pairs(res) do
+				if type(item) == "table" then
+					local name = item.Name or item.name or item.StorageKey or item.ItemName or ""
+					local price = item.Price or item.Value or item.price or item.value or 0
+					local count = item.Count or item.count or item.Quantity or 1
+					if (tonumber(count) or 1) > 0 then
+						addFruit(name, price, count)
+					end
+				elseif type(item) == "string" and item ~= "" then
+					addFruit(item, 0, 1)
 				end
 			end
 		end
 	end)
 
-	-- 2. Fallback: Thu ItemReplicationService client
-	if #fruits == 0 then
+	-- 2. Check server remote: getInventory
+	pcall(function()
+		local res = CommF_:InvokeServer("getInventory")
+		if type(res) == "table" then
+			for _, item in pairs(res) do
+				if type(item) == "table" then
+					local itemType = tostring(item.Type or item.Category or item.Section or "")
+					local name = item.Name or item.name or item.StorageKey or ""
+					local count = tonumber(item.Count or item.Quantity or item.count) or 0
+					if (itemType:find("Fruit") or name:find("Fruit") or name:find("-") or RAID_FRUIT_VALUES[normalizeRaidFruitName(name)]) and count > 0 then
+						addFruit(name, item.Value or item.Price or 0, count)
+					end
+				end
+			end
+		end
+	end)
+
+	-- 3. Check client ItemReplicationService (neu remote server khong tra ve)
+	if #ownedFruits == 0 then
 		pcall(function()
 			RaidRefreshInventory()
 			for _, item in pairs(RaidFarming.Inventory) do
-				if type(item) == "table" and not seen[item] then
-					seen[item] = true
-					local rawName = item.Name or ""
-					local fruitName = normalizeRaidFruitName(rawName)
-					local value = tonumber(item.Value) or RAID_FRUIT_VALUES[fruitName] or 0
+				if type(item) == "table" then
 					local count = tonumber(item.Count) or tonumber(item.Quantity) or 0
-					if fruitName ~= "" and count > 0 and (value == 0 or value < 1000000) and not seen[fruitName] then
-						seen[fruitName] = true
-						fruits[#fruits + 1] = {
-							Name = tostring(item.Name or rawName),
-							Value = value > 0 and value or (RAID_FRUIT_VALUES[fruitName] or 50000),
-							Count = count,
-							ItemId = item.ItemId,
-						}
+					local owned = item.Owned == true or count > 0
+					if owned and count > 0 then
+						addFruit(item.Name or item.Label, item.Value, count)
 					end
 				end
 			end
 		end)
 	end
 
-	-- 3. Fallback danh sach trai duoi 1M de luon co muc tieu goi LoadFruit
-	for _, fallback in ipairs(UNDER_1M_FRUITS_FALLBACK) do
-		local fName = normalizeRaidFruitName(fallback.Name)
-		if not seen[fName] then
-			seen[fName] = true
-			fruits[#fruits + 1] = {
-				Name = fallback.Name,
-				Alt = fallback.Alt,
-				Value = fallback.Price,
-				Count = 1,
-			}
-		end
+	-- 4. Check UI Inventory Storage trong PlayerGui neu co
+	if #ownedFruits == 0 then
+		pcall(function()
+			local pgui = LocalPlayer:FindFirstChild("PlayerGui")
+			local main = pgui and pgui:FindFirstChild("Main")
+			local inv = main and (main:FindFirstChild("FruitStorage", true) or main:FindFirstChild("Inventory", true))
+			if inv then
+				for _, frame in ipairs(inv:GetDescendants()) do
+					if frame:IsA("Frame") or frame:IsA("TextButton") then
+						local title = frame:FindFirstChild("ItemName") or frame:FindFirstChild("Title") or frame:FindFirstChild("NameLabel")
+						local countLabel = frame:FindFirstChild("ItemCount") or frame:FindFirstChild("Count")
+						if title and title:IsA("TextLabel") and title.Text ~= "" then
+							local count = countLabel and tonumber(tostring(countLabel.Text):match("%d+")) or 1
+							if count > 0 then
+								addFruit(title.Text, 0, count)
+							end
+						end
+					end
+				end
+			end
+		end)
 	end
 
-	table.sort(fruits, function(a, b)
+	-- Sap xep theo gia tang dan (re nhat len dau)
+	table.sort(ownedFruits, function(a, b)
 		if a.Value == b.Value then return tostring(a.Name) < tostring(b.Name) end
 		return a.Value < b.Value
 	end)
-	return fruits
+
+	return ownedFruits
 end
 
 function RaidCheckSpecialMicrochip()
@@ -5024,7 +5046,7 @@ function RaidBuyChip(maxAttempts)
 	return false, "chip buy failed"
 end
 
--- Lay fruit < 1M tu inventory storage ra ngoai va equip len tay de quy doi chip.
+-- Unstore trai < 1M thuc su co trong inventory va equip len tay de doi chip
 function RaidLoadFruitForChip()
 	local function getAndEquipHeldFruit()
 		local character = LocalPlayer.Character
@@ -5053,17 +5075,22 @@ function RaidLoadFruitForChip()
 		return nil
 	end
 
-	-- 1. Neu da co fruit tren tay / trong backpack thi equip luon
+	-- 1. Neu da co fruit tren tay / trong backpack thi dung luon
 	local held = getAndEquipHeldFruit()
 	if held then return true end
 
-	-- 2. Quet danh sach trai duoi 1M de unstore
-	local fruits = RaidGetUnder1MFruits()
-	for _, fruit in ipairs(fruits) do
-		local rawName = fruit.Name or ""
+	-- 2. Quet chinh xac inventory de lay danh sach trai nguoi choi DANG CO TRONG KHO
+	local ownedFruits = RaidGetOwnedUnder1MFruits()
+	if #ownedFruits == 0 then
+		status("No owned fruits < 1M in inventory storage to trade chip")
+		return false
+	end
+
+	-- 3. Lay trai re nhat va unstore
+	for _, fruit in ipairs(ownedFruits) do
+		local rawName = fruit.Name
 		local loadName = RaidCleanLoadName(rawName)
-		local candidates = { loadName }
-		if fruit.Alt then table.insert(candidates, fruit.Alt) end
+		local candidates = { rawName, loadName }
 		local left, right = loadName:match("^(.-)%-(.-)$")
 		if left and right and left:gsub("%s", "") == right:gsub("%s", "") then
 			table.insert(candidates, left .. " Fruit")
@@ -5074,7 +5101,7 @@ function RaidLoadFruitForChip()
 
 		for _, candidateName in ipairs(candidates) do
 			if candidateName and candidateName ~= "" then
-				status("Unstoring fruit: [" .. candidateName .. "] for raid chip")
+				status("Unstoring owned [" .. candidateName .. "] (" .. formatNumber(fruit.Value) .. " Beli)")
 				pcall(function()
 					CommF_:InvokeServer("LoadFruit", candidateName)
 				end)
@@ -5091,24 +5118,33 @@ function RaidLoadFruitForChip()
 	return false
 end
 
--- Kiem tra xem nguoi choi co dang trong tran Raid khong (qua GUI Timer hoac dao raid)
-function RaidIsActive()
-	-- 1. Kiem tra GUI Timer tren man hinh (Time Left: MM:SS)
+-- Doc text Timer "Time Left: MM:SS" tren GUI neu dang trong tran Raid
+function RaidGetTimerText()
 	local pgui = LocalPlayer:FindFirstChild("PlayerGui")
-	if pgui then
-		for _, gui in ipairs(pgui:GetChildren()) do
-			if gui:IsA("ScreenGui") and gui.Enabled then
-				for _, desc in ipairs(gui:GetDescendants()) do
-					if desc:IsA("TextLabel") and desc.Visible and string.find(string.lower(tostring(desc.Text or "")), "time left", 1, true) then
-						return true
+	if not pgui then return nil end
+	for _, gui in ipairs(pgui:GetChildren()) do
+		if gui:IsA("ScreenGui") and gui.Enabled then
+			for _, desc in ipairs(gui:GetDescendants()) do
+				if desc:IsA("TextLabel") and desc.Visible and desc.TextTransparency < 1 then
+					local txt = tostring(desc.Text or "")
+					if string.find(string.lower(txt), "time left", 1, true) then
+						return txt
 					end
 				end
 			end
 		end
 	end
-	-- 2. Kiem tra vi tri dao raid (Island 1 -> 5)
-	local island = RaidGetCurrentIsland()
-	if island then return true end
+	return nil
+end
+
+-- Kiem tra xem nguoi choi co dang trong tran Raid khong
+function RaidIsActive()
+	-- 1. Raid dang chay khi va chi khi Timer "Time Left" dang ton tai va hien thi tren man hinh
+	local timer = RaidGetTimerText()
+	if timer then
+		return true
+	end
+	-- 2. Khi het Timer tren man hinh -> Tran Raid DA KET THUC (Thang, Thua, hoac Timeout)
 	return false
 end
 
@@ -5152,10 +5188,11 @@ function RaidGetCurrentIsland()
 	return nearestIsland
 end
 
--- Lay danh sach tat ca quai song trong vung Raid
-function RaidGetLivingEnemies(maxRange)
-	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if not root then return {} end
+-- Bien luu tien do Wave/Dao hien tai cua Raid (1 -> 2 -> 3 -> 4 -> 5), khong bao gio tut lui
+local currentRaidWave = 1
+
+-- Lay danh sach tat ca quai song tren toan bo khu vuc Raid
+function RaidGetAllEnemies()
 	local list = {}
 	local folders = {}
 	if Workspace:FindFirstChild("Enemies") then table.insert(folders, Workspace.Enemies) end
@@ -5163,22 +5200,21 @@ function RaidGetLivingEnemies(maxRange)
 	local origin = Workspace:FindFirstChild("_WorldOrigin")
 	if origin and origin:FindFirstChild("Enemies") then table.insert(folders, origin.Enemies) end
 
-	local maxDist = tonumber(maxRange) or 3000
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 	for _, folder in ipairs(folders) do
 		for _, enemy in ipairs(folder:GetChildren()) do
 			if enemy:IsA("Model") and enemy ~= LocalPlayer.Character then
 				local hum = enemy:FindFirstChildOfClass("Humanoid")
 				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChild("Head")
 				if hum and enemyRoot and hum.Health > 0 then
-					local dist = (enemyRoot.Position - root.Position).Magnitude
-					if dist <= maxDist then
-						table.insert(list, {
-							Model = enemy,
-							Humanoid = hum,
-							Root = enemyRoot,
-							Distance = dist
-						})
-					end
+					local dist = root and (enemyRoot.Position - root.Position).Magnitude or 0
+					table.insert(list, {
+						Model = enemy,
+						Humanoid = hum,
+						Root = enemyRoot,
+						Distance = dist,
+						Position = enemyRoot.Position
+					})
 				end
 			end
 		end
@@ -5187,12 +5223,40 @@ function RaidGetLivingEnemies(maxRange)
 	return list
 end
 
--- Combat tu dong clear toan bo 5 dao trong Raid
+-- Xac dinh chinh xac Dao/Wave hien tai dua vao vi tri quai va tien do da qua
+function RaidGetActiveWaveIsland()
+	local islands = RaidGetIslands()
+	local allEnemies = RaidGetAllEnemies()
+
+	-- 1. Neu co quai song tren map -> quai o dao nao thi do la wave hien tai
+	if #allEnemies > 0 then
+		for _, enemyData in ipairs(allEnemies) do
+			for waveIdx = 1, 5 do
+				if islands[waveIdx] then
+					local dist = (enemyData.Position - islands[waveIdx].Position).Magnitude
+					if dist < 800 then
+						-- Neu tim thay quai o dao cao hon -> cap nhat tien do wave len dao do
+						if waveIdx > currentRaidWave then
+							currentRaidWave = waveIdx
+						end
+						return currentRaidWave, islands[currentRaidWave]
+					end
+				end
+			end
+		end
+	end
+
+	-- 2. Dam bao wave luon trong khoang 1..5
+	currentRaidWave = math.clamp(currentRaidWave, 1, 5)
+	return currentRaidWave, islands[currentRaidWave]
+end
+
+-- Combat tu dong clear toan bo 5 dao trong Raid theo dung thu tu 1 -> 2 -> 3 -> 4 -> 5
 function RaidFightAllIslands(maxDuration)
 	maxDuration = maxDuration or 600
 	local started = tick()
-	local currentIslandIndex = 1
-	local lastAdvanceCheck = 0
+	local lastTargetTime = tick()
+	local lastWaveAdvance = tick()
 
 	while tick() - started < maxDuration and RaidIsActive() do
 		local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -5203,15 +5267,36 @@ function RaidFightAllIslands(maxDuration)
 			TyrEnsureWeapon()
 			module:haki()
 
-			local enemies = RaidGetLivingEnemies(2500)
-			if #enemies > 0 then
-				local target = enemies[1]
-				local enemyRoot = target.Root
-				local enemyHum = target.Humanoid
-				local enemyName = target.Model.Name
+			local waveNum, waveIsland = RaidGetActiveWaveIsland()
+			local islands = RaidGetIslands()
+			local allEnemies = RaidGetAllEnemies()
+			local targetEnemy = nil
 
-				status("Raid: killing " .. enemyName .. " [" .. math.floor(enemyHum.Health) .. " HP]")
+			-- Uu tien danh quai thuoc dao hien tai
+			if #allEnemies > 0 then
+				if waveIsland then
+					for _, e in ipairs(allEnemies) do
+						if (e.Position - waveIsland.Position).Magnitude < 1000 then
+							targetEnemy = e
+							break
+						end
+					end
+				end
+				-- Neu khong co quai tren dao hien tai nhung co quai tren map -> target quai gan nhat
+				if not targetEnemy then
+					targetEnemy = allEnemies[1]
+				end
+			end
 
+			if targetEnemy then
+				lastTargetTime = tick()
+				local enemyRoot = targetEnemy.Root
+				local enemyHum = targetEnemy.Humanoid
+				local enemyName = targetEnemy.Model.Name
+
+				status("Raid Island " .. tostring(currentRaidWave) .. "/5: killing " .. enemyName .. " [" .. math.floor(enemyHum.Health) .. " HP]")
+
+				-- Orbit 3D va tan cong
 				local orbit = getExtractOrbitTarget(enemyRoot.CFrame, 22)
 					or CFrame.new(enemyRoot.Position + Vector3.new(0, 22, 0))
 				module:topos(orbit, 220, 0, true, true)
@@ -5221,33 +5306,32 @@ function RaidFightAllIslands(maxDuration)
 				if getgenv().TyrantFastAttack then
 					pcall(getgenv().TyrantFastAttack)
 				end
-				TyrSpamMeleeSkills(enemyRoot)
-				TyrNormalAttack(0.25, enemyRoot)
+				TyrNormalAttack(0.2, enemyRoot)
 			else
-				-- Khong con quai o dao hien tai -> bay sang dao tiep theo (1 -> 5)
-				local islands = RaidGetIslands()
-				if tick() - lastAdvanceCheck > 1.5 then
-					lastAdvanceCheck = tick()
-					for i = 1, 5 do
-						if islands[i] and (islands[i].Position - root.Position).Magnitude < 1200 then
-							currentIslandIndex = math.min(5, i + 1)
-							break
-						end
+				-- Da diet het quai tren dao hien tai:
+				-- Cho 2 giay de mob kip chet/bien mat, sau do tien len dao tiep theo (khong bao gio quay ve dao 1)
+				if tick() - lastTargetTime > 2 and tick() - lastWaveAdvance > 3 then
+					lastWaveAdvance = tick()
+					if currentRaidWave < 5 then
+						currentRaidWave = currentRaidWave + 1
 					end
 				end
 
-				local targetIsland = islands[currentIslandIndex] or islands[1]
+				local targetIsland = islands[currentRaidWave] or waveIsland
 				if targetIsland then
-					status("Advancing to Raid Island " .. tostring(currentIslandIndex))
+					status("Raid: Advancing to Island " .. tostring(currentRaidWave) .. "/5")
 					module:topos(targetIsland.CFrame + Vector3.new(0, 35, 0), 220, 0, true, true)
 				else
-					status("Waiting for raid mobs / boss spawn...")
+					status("Raid: Island " .. tostring(currentRaidWave) .. "/5 - waiting for spawn...")
 				end
 				task.wait(0.5)
 			end
 		end
 		task.wait(0.04)
 	end
+
+	-- Khi het tran raid (thang/thua/timeout) -> reset wave ve 1 cho tran tiep theo
+	currentRaidWave = 1
 	module:stopTween()
 end
 
