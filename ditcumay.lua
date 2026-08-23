@@ -5674,6 +5674,25 @@ function handleFragmentFarming(requiredFragments)
 		local autoraid = farmConfig.autoraid
 		local autotyrant = farmConfig.autotyrant
 		if autoraid then
+			if RaidIsActive() then
+				if tyrantFarmingActive then
+					stopTyrantFarming()
+				end
+				startRaidFarming(target)
+				return raidFarmingActive
+			end
+			if os.time() < RaidFarming.RetryAt then
+				if autotyrant then
+					if raidFarmingActive then
+						stopRaidFarming()
+					end
+					status("Raid blocked - farming Tyrant for fragments")
+					startTyrantFarming(target)
+					return tyrantFarmingActive
+				end
+				status("Raid on cooldown - waiting")
+				return true
+			end
 			if tyrantFarmingActive then
 				stopTyrantFarming()
 			end
