@@ -1,4 +1,4 @@
-local getgenv = getgenv or function() return _G end
+local getgenv = (typeof(getgenv) == "function" and getgenv) or function() return _G end
 print("[v4] script start")
 getgenv().Config = {
 	["Team"] = "Marines",
