@@ -486,11 +486,30 @@ function safeLookAt(position, target)
 	return CFrame.lookAt(position, target, up)
 end
 
+-- Aim target dung chung cho ca trial (Sea Beast) va farm/dap binh.
+-- _G.TRIAL_SKILL_TARGET chi song khi _G.SHOULDSPAMSKILLS = true, con
+-- _G.SKILL_AIM_TARGET dung cho moi truong hop khac (binh, Tyrant, mob):
+-- khong lock camera, chi quay than nhan vat va con tro dung luc ban skill.
+_G.SKILL_AIM_TARGET = nil
+
+-- Doc part dang can aim, uu tien target cua trial de khong doi hanh vi cu.
+function getActiveAimPart()
+	local trialTarget = _G.SHOULDSPAMSKILLS and _G.TRIAL_SKILL_TARGET
+	if typeof(trialTarget) == "Instance" and trialTarget:IsA("BasePart") and trialTarget.Parent then
+		return trialTarget, true
+	end
+	local aimTarget = _G.SKILL_AIM_TARGET
+	if typeof(aimTarget) == "Instance" and aimTarget:IsA("BasePart") and aimTarget.Parent then
+		return aimTarget, false
+	end
+	return nil, false
+end
+
 -- The tween writes the root CFrame every Heartbeat, after the aim RenderStep,
 -- so a plain CFrame.new(position) erased the rotation skills are fired along.
 function trialAimLookCFrame(position)
-	local target = _G.SHOULDSPAMSKILLS and _G.TRIAL_SKILL_TARGET
-	if typeof(target) == "Instance" and target:IsA("BasePart") and target.Parent then
+	local target = getActiveAimPart()
+	if target then
 		return safeLookAt(position, target.Position)
 	end
 	return CFrame.new(position)
@@ -2771,6 +2790,39 @@ function getTrainingIslandTarget(islandName)
 	return data.Position
 end
 
+-- Server luu diem respawn qua Data.LastSpawnPoint (script LastSpawnPoint cua
+-- game poll moi 1s roi goi SetLastSpawnPoint khi nguoi choi dung trong vung
+-- _WorldOrigin.Locations chua mot model trong PlayerSpawns.<Team>). Chi goi
+-- SetSpawnPoint la khong du: khi reset, server restore LastSpawnPoint cu nen
+-- nhan vat giat ve dao truoc do.
+function getLastSpawnPointValue()
+	local data = Players.LocalPlayer:FindFirstChild("Data")
+	local node = data and data:FindFirstChild("LastSpawnPoint")
+	return node and tostring(node.Value) or nil
+end
+
+-- Tim ten spawn trong PlayerSpawns gan vi tri dich nhat (bat ke Team nao).
+function findSpawnNameNear(position, maxDistance)
+	local origin = Workspace:FindFirstChild("_WorldOrigin")
+	local spawns = origin and origin:FindFirstChild("PlayerSpawns")
+	if not spawns then return nil end
+	local bestName, bestDist = nil, maxDistance or 1200
+	for _, team in ipairs(spawns:GetChildren()) do
+		for _, spawn in ipairs(team:GetChildren()) do
+			local part = spawn:IsA("BasePart") and spawn
+				or (spawn:IsA("Model") and (spawn.PrimaryPart or spawn:FindFirstChildWhichIsA("BasePart")))
+			if part then
+				local dist = (part.Position - position).Magnitude
+				if dist < bestDist then
+					bestDist = dist
+					bestName = spawn.Name
+				end
+			end
+		end
+	end
+	return bestName
+end
+
 function setTrainingSpawnPoint(target)
 	local character = Players.LocalPlayer.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -2782,6 +2834,22 @@ function setTrainingSpawnPoint(target)
 	local ok = pcall(function()
 		CommF_:InvokeServer("SetSpawnPoint")
 	end)
+	-- Ep luon LastSpawnPoint theo ten spawn cua dao dich, roi cho Data cap nhat
+	local spawnName = findSpawnNameNear(target.Position, 1500)
+	if spawnName then
+		local current = getLastSpawnPointValue()
+		if current ~= spawnName then
+			pcall(function()
+				CommF_:InvokeServer("SetLastSpawnPoint", spawnName)
+			end)
+			local deadline = tick() + 2.5
+			repeat
+				task.wait(0.15)
+				current = getLastSpawnPointValue()
+			until current == spawnName or tick() >= deadline
+		end
+		ok = (current == spawnName)
+	end
 	if wasTweening then task.wait(0.1) end
 	return ok
 end
@@ -2802,10 +2870,28 @@ function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 	module:stopTween()
 	status("Reset teleport to [" .. tostring(islandName) .. "]")
 	if forceReset or getgenv().Config["Reset Teleport After Trial"] ~= false then
-		-- Reset first, then place the new character at the training island. Setting
-		-- spawn before dying is unreliable because the server may restore the old
-		-- spawn during CharacterAdded.
-		setTrainingSpawnPoint(target)
+		-- Phai chac Data.LastSpawnPoint da tro ve dao dich TRUOC khi chet, neu
+		-- khong server respawn ta o dao cu. Thu lai vai lan vi remote co the bi
+		-- drop khi lag.
+		local wantedSpawn = findSpawnNameNear(target.Position, 1500)
+		local spawnOk = false
+		for attempt = 1, 3 do
+			spawnOk = setTrainingSpawnPoint(target) == true
+			if not wantedSpawn or getLastSpawnPointValue() == wantedSpawn then
+				spawnOk = true
+				break
+			end
+			status("Spawn point not applied (try " .. attempt .. ") - retrying")
+			task.wait(0.4)
+		end
+		if wantedSpawn and getLastSpawnPointValue() ~= wantedSpawn then
+			-- Khong set duoc spawn: reset se giat ve dao cu, nen tween thang
+			-- toi dao dich thay vi tu sat.
+			status("Spawn point locked - tween to island instead of reset")
+			if not topos(target) then return false end
+			setTrainingSpawnPoint(target)
+			return true
+		end
 		local oldCharacter = character
 		pcall(function()
 			humanoid.Health = 0
@@ -4013,7 +4099,9 @@ function TyrLoadAttack()
 	end)
 end
 
-function TyrNormalAttack(duration)
+-- aimPart: dat _G.SKILL_AIM_TARGET trong suot duration de moi click chuot
+-- deu ban theo huong toi muc tieu (binh/mob), thay vi huong camera hien tai.
+function TyrNormalAttack(duration, aimPart)
 	local char = LocalPlayer.Character
 	if not char then
 		return
@@ -4022,8 +4110,19 @@ function TyrNormalAttack(duration)
 	if not hum then
 		return
 	end
+	local previousAim = _G.SKILL_AIM_TARGET
+	local hasAim = typeof(aimPart) == "Instance" and aimPart:IsA("BasePart")
+	if hasAim then
+		_G.SKILL_AIM_TARGET = aimPart
+	end
 	local started = tick()
 	repeat
+		if hasAim then
+			if not aimPart.Parent then
+				break
+			end
+			aimAtSkillTarget(0.18)
+		end
 		local tool = hum and char:FindFirstChildWhichIsA("Tool")
 		if tool then
 			pcall(function()
@@ -4043,6 +4142,9 @@ function TyrNormalAttack(duration)
 		end
 		task.wait(0.06)
 	until tick() - started >= (duration or 0.6) or TyrFindTyrant()
+	if hasAim then
+		_G.SKILL_AIM_TARGET = previousAim
+	end
 end
 
 function TyrBuyDragonTalon()
@@ -4190,14 +4292,55 @@ function TyrEquipMeleeFromBackpack()
 	return equipped and equipped.Parent == character and equipped or nil
 end
 
-function TyrSpamMeleeSkills()
-	if not TyrEquipMeleeFromBackpack() then return false end
-	for _, key in ipairs({"Z", "X", "C"}) do
-		VirtualInputManager:SendKeyEvent(true, key, false, game)
-		VirtualInputManager:SendKeyEvent(false, key, false, game)
-		task.wait(0.08)
+-- Doc cooldown skill tu PlayerGui.Main.Skills.<tool>.<key>. Truoc day spam
+-- Z/X/C vo dieu kien: phim bam trong cooldown bi game bo qua nhung script van
+-- tinh la "da danh" roi doi target -> binh khong nhan du damage de vo.
+function isSkillKeyReady(toolName, key)
+	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	local main = playerGui and playerGui:FindFirstChild("Main")
+	local skills = main and main:FindFirstChild("Skills")
+	local ui = skills and skills:FindFirstChild(toolName)
+	local entry = ui and ui:FindFirstChild(key)
+	if not entry then
+		-- Khong doc duoc UI (streaming/GUI khac) -> coi nhu san sang de khong
+		-- chan hoan toan viec danh.
+		return true
 	end
-	return true
+	local cooldown = entry:FindFirstChild("Cooldown")
+	local title = entry:FindFirstChild("Title")
+	if not cooldown or not title then
+		return true
+	end
+	local titleReady = title.TextColor3 == Color3.new(1, 1, 1)
+		or title.TextColor3 == Color3.fromRGB(255, 255, 255)
+	local cooldownReady = cooldown.Size.X.Scale == 0 and cooldown.Size.X.Offset == 0
+	return titleReady and cooldownReady
+end
+
+-- aimPart: khi co, aim lai truoc TUNG phim thay vi ban theo huong cu. Server
+-- doc look vector tai thoi diem nhan phim, nen aim mot lan cho ca 3 skill se
+-- lech ngay khi tween/camera nhich.
+function TyrSpamMeleeSkills(aimPart)
+	local melee = TyrEquipMeleeFromBackpack()
+	if not melee then return false end
+	local previousAim = _G.SKILL_AIM_TARGET
+	if typeof(aimPart) == "Instance" and aimPart:IsA("BasePart") then
+		_G.SKILL_AIM_TARGET = aimPart
+	end
+	local fired = 0
+	for _, key in ipairs({"Z", "X", "C"}) do
+		if isSkillKeyReady(melee.Name, key) then
+			if _G.SKILL_AIM_TARGET then
+				aimAtSkillTarget(0.18)
+			end
+			VirtualInputManager:SendKeyEvent(true, key, false, game)
+			VirtualInputManager:SendKeyEvent(false, key, false, game)
+			fired = fired + 1
+			task.wait(0.08)
+		end
+	end
+	_G.SKILL_AIM_TARGET = previousAim
+	return fired > 0
 end
 
 function TyrFarmEnemy(enemy, isBoss)
@@ -4254,6 +4397,74 @@ function TyrFarmEnemy(enemy, isBoss)
 	TyrState.CurrentTarget = nil
 end
 
+-- Bam vao 1 binh cho den khi no thuc su bien mat (Parent == nil) hoac het
+-- thoi gian. Server lag lam skill/hit bi drop nen phai kiem tra ket qua thay
+-- vi ban mot loat roi di.
+local VASE_MAX_TIME = 6
+local VASE_REACH = 35
+
+function TyrBreakSingleVase(data, deadline)
+	local part = data and data.Part
+	local object = data and data.Object
+	if not part or not part.Parent then
+		return false
+	end
+	local speed = getgenv().TyrantConfig.TweenSpeed
+	local started = tick()
+
+	local function vaseGone()
+		if object and not object.Parent then
+			return true
+		end
+		if not part.Parent then
+			return true
+		end
+		return false
+	end
+
+	local function timeLeft()
+		if tick() - started >= VASE_MAX_TIME then
+			return false
+		end
+		if deadline and tick() >= deadline then
+			return false
+		end
+		return not TyrFindTyrant()
+	end
+
+	while timeLeft() do
+		if vaseGone() then
+			return true
+		end
+		local target = CFrame.new(part.Position + Vector3.new(0, 6, 0), part.Position)
+		local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if not root or (root.Position - part.Position).Magnitude > VASE_REACH then
+			TyrTweenTo(target, speed, true)
+			root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		end
+		if vaseGone() then
+			return true
+		end
+		if not root then
+			task.wait(0.1)
+		elseif (root.Position - part.Position).Magnitude > VASE_REACH then
+			-- Tween bi ngat (lag/noclip): keo thang toi roi danh tiep
+			pcall(function()
+				root.CFrame = target
+			end)
+			task.wait(0.08)
+		else
+			-- Aim vao binh truoc moi lan ban de skill khong bay lech
+			TyrSpamMeleeSkills(part)
+			if vaseGone() then
+				return true
+			end
+			TyrNormalAttack(0.55, part)
+		end
+	end
+	return vaseGone()
+end
+
 -- force=true: dap binh du chua doc duoc mat (bi streaming an), gioi han
 -- boi deadline de khong dinh mai o arena.
 function TyrBreakVases(force, deadline)
@@ -4287,21 +4498,7 @@ function TyrBreakVases(force, deadline)
 					return
 				end
 				if data.Part and data.Part.Parent then
-					local target = CFrame.new(data.Part.Position + Vector3.new(0, 6, 0), data.Part.Position)
-					TyrTweenTo(target, getgenv().TyrantConfig.TweenSpeed, true)
-					local character = LocalPlayer.Character
-					local root = character and character:FindFirstChild("HumanoidRootPart")
-					-- Tween co the bi ngat giua duong; thu lai mot lan truoc khi bo qua
-					-- thay vi im lang khong danh vao binh nao.
-					if root and data.Part.Parent and (root.Position - data.Part.Position).Magnitude > 35 then
-						TyrTweenTo(target, getgenv().TyrantConfig.TweenSpeed, true)
-						character = LocalPlayer.Character
-						root = character and character:FindFirstChild("HumanoidRootPart")
-					end
-					if root and data.Part.Parent and (root.Position - data.Part.Position).Magnitude <= 35 then
-						TyrSpamMeleeSkills()
-						TyrNormalAttack(0.55)
-					end
+					TyrBreakSingleVase(data, deadline)
 				end
 			end
 		end
@@ -4472,6 +4669,380 @@ function stopTyrantFarming()
 	tyrantFarmingTask = nil
 end
 
+-- ===================== RAID FRAGMENT FARMING =====================
+-- Port tu Extract.lua + remotes da verify trong src.rbxlx:
+--  - Inventory: ItemReplicationService:GetItems(KEYS.*) + ItemConfig.match
+--  - Mua chip: CommF_:InvokeServer("RaidsNpc", "Select", <theme>)
+--    -> tra 1 la thanh cong, 0 la level < 1100, string la error/cooldown
+--  - Lay fruit ra quy doi: CommF_:InvokeServer("LoadFruit", <StorageKey>)
+
+local RaidFarming = {
+	Active = false,
+	CurrentChip = nil,
+	LastRaidAlert = 0,   -- "go!" notification
+	LastRaidAlert2 = 0,  -- "raid" notification
+	FruitRetryAt = 0,    -- os.time(): sau thoi diem nay moi thu lay fruit lai
+	RetryAt = 0,         -- backoff khi mua chip that bai
+	Inventory = {},      -- item table theo Extract.lua RefreshInventory
+}
+
+local RAID_FRUIT_VALUES = {
+	rocket = 5000, spin = 7500, blade = 30000, spring = 60000,
+	bomb = 80000, smoke = 100000, spike = 180000, flame = 250000,
+	falcon = 300000, ice = 350000, sand = 420000, dark = 500000,
+	diamond = 600000, light = 650000, rubber = 750000,
+	barrier = 800000, ghost = 940000, magma = 960000,
+}
+
+function normalizeRaidFruitName(value)
+	local name = string.lower(tostring(value or ""))
+	name = name:gsub("%b[]", "")
+	name = name:gsub("physicalmoveset", "")
+	name = name:gsub(" fruit", "")
+	name = name:gsub("%-", " ")
+	name = name:gsub("%s+", " ")
+	name = name:gsub("^%s+", ""):gsub("%s+$", "")
+	local first, second = name:match("^([^%s]+)%s+([^%s]+)$")
+	if first and second and first == second then
+		name = first
+	end
+	return name
+end
+
+function RaidCleanLoadName(value)
+	local name = tostring(value or "")
+	name = name:gsub("%s*%b[]", "")
+	name = name:gsub("%s*%b()", "")
+	name = name:gsub("%s*[Mm]oveset%s*", "")
+	name = name:gsub("%s*[Pp]hysical[Mm]oveset%s*", "")
+	name = name:gsub("^%s+", ""):gsub("%s+$", "")
+	name = name:gsub("%s+", " ")
+	return name
+end
+
+function RaidRefreshInventory()
+	for key in pairs(RaidFarming.Inventory) do
+		RaidFarming.Inventory[key] = nil
+	end
+	local okService, ItemReplicationService = pcall(function()
+		return require(game:GetService("ReplicatedStorage"):WaitForChild("ItemReplicationService", 3))
+	end)
+	local okKeys, ItemKeys = pcall(function()
+		return game:GetService("ReplicatedStorage")
+			:WaitForChild("ItemReplicationService", 3)
+			:WaitForChild("KEYS", 3)
+	end)
+	local okConfig, ItemConfig = pcall(function()
+		return require(game:GetService("ReplicatedStorage"):WaitForChild("ItemConfig", 3))
+	end)
+	if not okService or not okKeys or not okConfig or type(ItemReplicationService) ~= "table" then
+		return false
+	end
+
+	local function getReplicatedItems(key)
+		if not key then return {} end
+		local ok, result = pcall(function()
+			return ItemReplicationService:GetItems(key)
+		end)
+		return ok and type(result) == "table" and result or {}
+	end
+
+	local quantityItems = getReplicatedItems(ItemKeys.QUANTITY)
+	local masteryItems = getReplicatedItems(ItemKeys.MASTERY)
+	local ownedItems = getReplicatedItems(ItemKeys.IS_OWNED)
+
+	local function readField(source, ...)
+		if type(source) ~= "table" then return nil end
+		for index = 1, select("#", ...) do
+			local key = select(index, ...)
+			if source[key] ~= nil then return source[key] end
+		end
+		return nil
+	end
+
+	-- GetItems tra ve {ItemId, NetworkedUID, Value} records, merge 3 loai key
+	local replicatedItems = {}
+	local function mergeRecords(records, field)
+		for legacyKey, record in pairs(records) do
+			local itemId = legacyKey
+			local value = record
+			if type(record) == "table" and record.ItemId ~= nil then
+				itemId = record.ItemId
+				value = record.Value
+			end
+			local entry = replicatedItems[itemId]
+			if not entry then
+				entry = {}
+				replicatedItems[itemId] = entry
+			end
+			if field == "Quantity" then
+				entry.Quantity = (tonumber(entry.Quantity) or 0) + (tonumber(value) or 0)
+			elseif field == "Mastery" then
+				entry.Mastery = math.max(tonumber(entry.Mastery) or 0, tonumber(value) or 0)
+			elseif field == "Owned" then
+				entry.Owned = entry.Owned or value == true
+			end
+		end
+	end
+	mergeRecords(quantityItems, "Quantity")
+	mergeRecords(masteryItems, "Mastery")
+	mergeRecords(ownedItems, "Owned")
+
+	for itemId, replicated in pairs(replicatedItems) do
+		local okMatch, itemData = pcall(function()
+			local matched = ItemConfig.match(itemId)
+			return matched and matched:unwrap()
+		end)
+		if okMatch and itemData then
+			local indexData = itemData.Index or itemData
+			-- DebugLabel co dang "{StorageKey} [{IdType}-{ItemId}]"
+			local itemLabel = readField(indexData, "DebugLabel", "Name", "DisplayName", "InternalName")
+				or tostring(itemId)
+			local itemName = readField(indexData, "StorageKey")
+			if not itemName then
+				itemName = tostring(itemLabel):gsub("%s*%[[%w%-]+%]%s*$", "")
+			end
+			itemName = tostring(itemName)
+			if itemName == "" then itemName = tostring(itemLabel) end
+			local itemType = readField(indexData, "IdType", "Type") or readField(itemData, "IdType", "Type")
+			local count = tonumber(replicated.Quantity) or 0
+			local mastery = tonumber(replicated.Mastery) or 0
+			local owned = replicated.Owned == true or count > 0 or mastery > 0
+			local entry = {
+				Name = itemName,
+				Label = tostring(itemLabel),
+				Count = count,
+				Quantity = count,
+				Mastery = mastery,
+				Owned = owned,
+				Type = readField(indexData, "Type", "ItemType", "Category")
+					or readField(itemData, "Type", "ItemType", "Category"),
+				IdType = itemType,
+				Value = tonumber(readField(indexData, "Value", "Price", "Cost"))
+					or tonumber(readField(itemData, "Value", "Price", "Cost")),
+				ItemId = itemId,
+				Data = itemData,
+			}
+			local existing = RaidFarming.Inventory[entry.Name]
+			-- Khong de Moveset phu mat item that
+			if not existing or (existing.IdType == "Moveset" and itemType ~= "Moveset") then
+				RaidFarming.Inventory[entry.Name] = entry
+			end
+			RaidFarming.Inventory[entry.Label] = entry
+		end
+	end
+	return true
+end
+
+-- Lay danh sach fruit trong inventory co gia < 1M beli, sort tang dan
+function RaidGetUnder1MFruits()
+	RaidRefreshInventory()
+	local fruits = {}
+	local seen = {}
+	for _, item in pairs(RaidFarming.Inventory) do
+		if type(item) == "table" and not seen[item] then
+			seen[item] = true
+			local rawName = item.Name or ""
+			local fruitName = normalizeRaidFruitName(rawName)
+			local value = tonumber(item.Value) or RAID_FRUIT_VALUES[fruitName] or 0
+			local count = tonumber(item.Count) or tonumber(item.Quantity) or 0
+			if fruitName ~= "" and RAID_FRUIT_VALUES[fruitName] ~= nil
+				and count > 0 and value > 0 and value < 1000000 then
+				fruits[#fruits + 1] = {
+					Name = tostring(item.Name or rawName),
+					Value = value,
+					Count = count,
+					ItemId = item.ItemId,
+				}
+			end
+		end
+	end
+	table.sort(fruits, function(a, b)
+		if a.Value == b.Value then return tostring(a.Name) < tostring(b.Name) end
+		return a.Value < b.Value
+	end)
+	return fruits
+end
+
+function RaidCheckSpecialMicrochip()
+	for _, container in ipairs({
+		LocalPlayer.Character,
+		LocalPlayer:FindFirstChildOfClass("Backpack"),
+	}) do
+		if container then
+			local chip = container:FindFirstChild("Special Microchip")
+			if chip then return chip end
+		end
+	end
+	return nil
+end
+
+-- Chon theme chip trung voi devil fruit dang cầm, else "Flame"
+function RaidRefreshRaidType()
+	local currentFruit = ""
+	pcall(function()
+		currentFruit = tostring(LocalPlayer.Data.DevilFruit.Value)
+	end)
+	local ok, raidsModule = pcall(function()
+		return require(game:GetService("ReplicatedStorage"):WaitForChild("Raids", 3))
+	end)
+	local themes = ok and type(raidsModule) == "table" and raidsModule.raids
+	if type(themes) == "table" then
+		for _, theme in ipairs(themes) do
+			if string.find(currentFruit, theme, 1, true) then
+				RaidFarming.CurrentChip = theme
+				return theme
+			end
+		end
+	end
+	RaidFarming.CurrentChip = "Flame"
+	return "Flame"
+end
+
+function RaidBuyChip(maxAttempts)
+	maxAttempts = tonumber(maxAttempts) or 5
+	for attempt = 1, maxAttempts do
+		if RaidCheckSpecialMicrochip() then return true end
+		local chipType = RaidRefreshRaidType()
+		status("Buying raid chip " .. attempt .. "/" .. maxAttempts .. " (" .. chipType .. ")")
+		local ok, result = pcall(function()
+			return CommF_:InvokeServer("RaidsNpc", "Select", chipType)
+		end)
+		-- result == 1: thanh cong; 0: level < 1100; string: error/cooldown
+		if ok and result == 1 then
+			task.wait(1)
+			if RaidCheckSpecialMicrochip() then return true end
+		elseif ok and type(result) == "string" then
+			-- Cooldown hoac loi: dua ra ngoai de caller quyet dinh fallback
+			return false, result
+		end
+		task.wait(1.25)
+		if RaidCheckSpecialMicrochip() then return true end
+	end
+	return false, "chip buy failed"
+end
+
+-- Lay fruit < 1M tu inventory ra ngoai de quy doi chip. Tra ve true neu
+-- cầm duoc fruit tren tay.
+function RaidLoadFruitForChip()
+	-- Da co fruit vat ly tren tay?
+	local function getHeldFruit()
+		local character = LocalPlayer.Character
+		local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+		for _, container in ipairs({character, backpack}) do
+			if container then
+				for _, tool in ipairs(container:GetChildren()) do
+					if tool:IsA("Tool") then
+						local tip = string.lower(tostring(tool.ToolTip or ""))
+						local toolName = tostring(tool.Name or "")
+						local isFruit = tip:find("fruit", 1, true) ~= nil
+							or toolName:find("Fruit", 1, true) ~= nil
+							or tool:FindFirstChild("Fruit") ~= nil
+						if isFruit then return tool end
+					end
+				end
+			end
+		end
+		return nil
+	end
+
+	local held = getHeldFruit()
+	if held then return true end
+	if os.time() < RaidFarming.FruitRetryAt then return false end
+
+	local fruits = RaidGetUnder1MFruits()
+	for _, fruit in ipairs(fruits) do
+		local loadName = RaidCleanLoadName(fruit.Name)
+		if loadName ~= "" then
+			status("Loading " .. loadName .. " (" .. formatNumber(fruit.Value) .. " beli) for chip trade")
+			pcall(function()
+				CommF_:InvokeServer("LoadFruit", loadName)
+			end)
+			task.wait(1)
+			held = getHeldFruit()
+			if held then return true end
+			-- Thu dang ten duoi "X-X Fruit" -> "X Fruit"
+			local left, right = loadName:match("^(.-)%-(.-)$")
+			if left and right and left:gsub("%s", "") == right:gsub("%s", "") then
+				pcall(function()
+					CommF_:InvokeServer("LoadFruit", left)
+				end)
+				task.wait(1)
+				held = getHeldFruit()
+				if held then return true end
+			end
+		end
+	end
+	RaidFarming.FruitRetryAt = os.time() + 45
+	return false
+end
+
+-- Tim dao raid hien tai (dang "Island N" trong Locations, cach goc > 7000)
+function RaidGetCurrentIsland()
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not root then return nil end
+	local origin = Workspace:FindFirstChild("_WorldOrigin")
+	local locations = origin and origin:FindFirstChild("Locations")
+	if not locations then return nil end
+	local islands = {{}, {}, {}, {}, {}}
+	for _, region in ipairs(locations:GetChildren()) do
+		local name = tostring(region.Name or "")
+		if string.find(name, "Island ", 1, true) then
+			local part = region:IsA("BasePart") and region
+				or (region:IsA("Model") and (region.PrimaryPart or region:FindFirstChildWhichIsA("BasePart")))
+			if part and (part.Position - Vector3.new(0, 0, 0)).Magnitude > 7000 then
+				local index = tonumber((name:gsub("Island ", "")))
+				if index and islands[index] then
+					table.insert(islands[index], region)
+				end
+			end
+		end
+	end
+	for k = 5, 1, -1 do
+		for _, region in ipairs(islands[k]) do
+			local part = region:IsA("BasePart") and region
+				or (region:IsA("Model") and (region.PrimaryPart or region:FindFirstChildWhichIsA("BasePart")))
+			if part and (part.Position - root.Position).Magnitude < 2000 then
+				return region
+			end
+		end
+	end
+	return nil
+end
+
+-- Bam nut RaidSummon2 de start raid
+function RaidStartSummon()
+	-- Xac dinh sea tu vi tri: Boat Castle (sea 2) tai x ~ -5100, z ~ -2900
+	local raidMapName = "Boat Castle"
+	local raidMap = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild(raidMapName)
+		or Workspace:FindFirstChild(raidMapName)
+	if not raidMap then return false end
+	local summon = raidMap:FindFirstChild("RaidSummon2")
+	local button = summon and summon:FindFirstChild("Button")
+	local mainButton = button and button:FindFirstChild("Main")
+	local clickDetector = mainButton and mainButton:FindFirstChildOfClass("ClickDetector")
+	if not clickDetector then return false end
+	EquipTool("Special Microchip")
+	fireclickdetector(clickDetector)
+	return true
+end
+
+-- Cho raid start: 2 notification "raid" roi "go!", timeout 30s
+function RaidWaitForStart(timeout)
+	local started = os.time()
+	timeout = timeout or 30
+	repeat
+		task.wait(0.1)
+	until os.time() - (RaidFarming.LastRaidAlert2 or 0) < 20
+		or os.time() - started > timeout
+	repeat
+		task.wait(0.1)
+	until os.time() - (RaidFarming.LastRaidAlert or 0) < 20
+		or os.time() - started > timeout
+	RaidFarming.LastRaidAlert = 0
+	return os.time() - started <= timeout
+end
+
 function startTyrantFarming(targetFragments)
 	tyrantFragmentTarget = math.max(0, tonumber(targetFragments) or tyrantFragmentTarget or 10000)
 	if tyrantFarmingTask then
@@ -4556,6 +5127,196 @@ function startTyrantFarming(targetFragments)
 	end)
 end
 
+-- Hook notification cua game de biet raid da start ("raid" + "go!").
+-- Extract.lua dung hookfunction Notification.new; o day thay bang
+-- NotificationCallBack cua getgenv neu executor ho tro, kem fallback
+-- OnClientNotify hoac TextChatServer khong can thiet.
+do
+	local previous = getgenv().NotificationCallBack
+	getgenv().NotificationCallBack = function(message)
+		local text = string.lower(tostring(message or ""))
+		if text:find("go!", 1, true) then
+			RaidFarming.LastRaidAlert = os.time()
+		end
+		if text:find("raid", 1, true) then
+			RaidFarming.LastRaidAlert2 = os.time()
+		end
+		if type(previous) == "function" then
+			pcall(previous, message)
+		end
+	end
+end
+
+-- Combat trong raid: giet enemies gan nhat trong dao raid
+function RaidFightIsland(island, maxDuration)
+	maxDuration = maxDuration or 60
+	local started = tick()
+	local lastIslandCheck = tick()
+	while tick() - started < maxDuration do
+		local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		local playerHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if not root or not playerHum or playerHum.Health <= 0 then
+			task.wait(1)
+		else
+			local nearest, nearestDist = nil, math.huge
+			for _, folder in ipairs(TyrGetEnemyFolders()) do
+				for _, enemy in ipairs(folder:GetChildren()) do
+					local hum = enemy:FindFirstChildOfClass("Humanoid")
+					local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+					if hum and enemyRoot and hum.Health > 0 then
+						local dist = (enemyRoot.Position - root.Position).Magnitude
+						if dist < nearestDist then
+							nearest, nearestDist = enemy, dist
+						end
+					end
+				end
+			end
+			if nearest and nearestDist < 2500 then
+				local enemyRoot = nearest:FindFirstChild("HumanoidRootPart")
+				local target = getExtractOrbitTarget(enemyRoot.CFrame, 25)
+					or CFrame.new(enemyRoot.Position + Vector3.new(0, 25, 0))
+				module:topos(target, 200, 0, true, true)
+				TyrSpamMeleeSkills(enemyRoot)
+				TyrNormalAttack(0.4, enemyRoot)
+			else
+				-- Khong con enemy: kien tri den vi tri dao
+				if tick() - lastIslandCheck > 2 then
+					lastIslandCheck = tick()
+					local part = island and (island:IsA("BasePart") and island
+						or (island:IsA("Model") and (island.PrimaryPart or island:FindFirstChildWhichIsA("BasePart"))))
+					if part then
+						module:topos(CFrame.new(part.Position + Vector3.new(0, 100, 0)), 200, 0, true, true)
+					end
+				end
+				task.wait(0.3)
+				return true -- Dao sach enemy, chuyen dao
+			end
+		end
+		task.wait(0.05)
+	end
+	module:stopTween()
+	return false
+end
+
+-- Mot vong raid hoan chinh. Tra ve:
+--   "farmed"  : raid chay, co the tiep tuc vong moi
+--   "wait"    : cho (cooldown chip / cho fruit) nen nen farm tyrant trong luc cho
+--   "retry"   : loi tam thoi, thu lai
+--   "stop"    : khong the raid tiep
+function RaidRunOnce(targetFragments)
+	local frags = tonumber(LocalPlayer.Data.Fragments.Value) or 0
+	if frags >= targetFragments then
+		return "stop"
+	end
+
+	-- Dang o dao raid? -> danh tiep
+	local island = RaidGetCurrentIsland()
+	if island then
+		status("Raid in progress - fighting island enemies")
+		RaidFightIsland(island, 90)
+		return "farmed"
+	end
+
+	-- Gate level/sea (raid chi sea 2, level >= 1300 theo Extract)
+	local level = tonumber(LocalPlayer.Data.Level.Value) or 0
+	if level < 1300 then
+		return "stop"
+	end
+
+	-- Co chip chua?
+	if not RaidCheckSpecialMicrochip() then
+		local bought, err = RaidBuyChip(5)
+		if not bought then
+			-- Mua that bai (cooldown/het beli): thu quy doi fruit < 1M
+			status("Chip buy failed (" .. tostring(err) .. ") - trying fruit trade")
+			if RaidLoadFruitForChip() then
+				local bought2 = RaidBuyChip(5)
+				if not bought2 then
+					RaidFarming.RetryAt = os.time() + 60
+					return "wait"
+				end
+			else
+				RaidFarming.RetryAt = os.time() + 60
+				return "wait"
+			end
+		end
+	end
+
+	if not RaidCheckSpecialMicrochip() then
+		return "retry"
+	end
+
+	if not RaidStartSummon() then
+		status("Raid summon not found - retrying")
+		task.wait(1)
+		return "retry"
+	end
+
+	if not RaidWaitForStart(30) then
+		RaidFarming.RetryAt = os.time() + 10
+		return "retry"
+	end
+
+	status("Raid started - fighting")
+	task.wait(1)
+	island = RaidGetCurrentIsland()
+	if island then
+		RaidFightIsland(island, 90)
+	end
+	return "farmed"
+end
+
+local raidFarmingActive = false
+local raidFarmingTask = nil
+local raidFragmentTarget = 10000
+
+function stopRaidFarming()
+	raidFarmingActive = false
+	if raidFarmingTask then
+		raidFarmingTask = nil
+	end
+	module:stopTween()
+end
+
+function startRaidFarming(targetFragments)
+	raidFragmentTarget = math.max(0, tonumber(targetFragments) or raidFragmentTarget or 10000)
+	if raidFarmingTask then
+		return
+	end
+	raidFarmingActive = true
+	raidFarmingTask = task.spawn(function()
+		while raidFarmingActive do
+			local v4State = getV4Status(false)
+			local frags = tonumber(LocalPlayer.Data.Fragments.Value) or 0
+			if v4State.canTrial or v4State.complete or frags >= raidFragmentTarget then
+				break
+			end
+			if os.time() < RaidFarming.RetryAt then
+				-- Cho cooldown chip: tam thoi khong lam gi (tyrant co the chay
+				-- song song qua handleFragmentFarming trigger)
+				status("Raid on cooldown - waiting")
+				task.wait(2)
+			else
+				local ok, result = pcall(RaidRunOnce, raidFragmentTarget)
+				if not ok then
+					RaidFarming.RetryAt = os.time() + 30
+					task.wait(2)
+				elseif result == "farmed" then
+					task.wait(0.5)
+				elseif result == "retry" then
+					task.wait(1.5)
+				else -- "wait" hoac "stop"
+					RaidFarming.RetryAt = os.time() + 60
+					raidFarmingActive = false
+				end
+			end
+		end
+		module:stopTween()
+		raidFarmingTask = nil
+		raidFarmingActive = false
+	end)
+end
+
 function handleFragmentFarming(requiredFragments)
 	local farmConfig = getgenv().Config["Farm Fragments"]
 	if not farmConfig then
@@ -4566,6 +5327,9 @@ function handleFragmentFarming(requiredFragments)
 		if tyrantFarmingActive then
 			stopTyrantFarming()
 		end
+		if raidFarmingActive then
+			stopRaidFarming()
+		end
 		return false
 	end
 	local target = math.max(0, tonumber(requiredFragments) or 10000)
@@ -4574,11 +5338,50 @@ function handleFragmentFarming(requiredFragments)
 		if tyrantFarmingActive then
 			stopTyrantFarming()
 		end
+		if raidFarmingActive then
+			stopRaidFarming()
+		end
 		return false
 	end
-	if type(farmConfig) == "table" and farmConfig.autotyrant then
-		startTyrantFarming(target)
-		return tyrantFarmingActive
+	-- Uu tien RAID: neu dang raid hoac mua duoc chip thi farm bang raid.
+	-- Chip cooldown + khong co fruit < 1M beli -> fallback farm Tyrant.
+	if type(farmConfig) == "table" then
+		local autoraid = farmConfig.autoraid
+		local autotyrant = farmConfig.autotyrant
+		if autoraid then
+			-- Dang o dao raid -> danh tiep, khong de tyrant keo di
+			if RaidGetCurrentIsland() then
+				if tyrantFarmingActive then
+					stopTyrantFarming()
+				end
+				startRaidFarming(target)
+				return raidFarmingActive
+			end
+			if os.time() >= RaidFarming.RetryAt then
+				local ok, result = pcall(RaidRunOnce, target)
+				if not ok then
+					RaidFarming.RetryAt = os.time() + 30
+					result = "wait"
+				end
+				if result == "farmed" or result == "retry" then
+					if tyrantFarmingActive then
+						stopTyrantFarming()
+					end
+					startRaidFarming(target)
+					return raidFarmingActive
+				end
+				-- "wait": chip cd / khong fruit < 1M -> farm tyrant trong luc cho
+			end
+		end
+		if autotyrant then
+			startTyrantFarming(target)
+			return tyrantFarmingActive
+		end
+		if autoraid then
+			-- Chi bat autoraid, khong co autotyrant: van chay vong raid
+			startRaidFarming(target)
+			return raidFarmingActive
+		end
 	end
 	return false
 end
@@ -4599,6 +5402,9 @@ function buyPendingV4Upgrade(v4State, roleLabel)
 	end
 	if tyrantFarmingActive then
 		stopTyrantFarming()
+	end
+	if raidFarmingActive then
+		stopRaidFarming()
 	end
 	status(roleLabel .. " buying V4 upgrade")
 	local ok, bought = pcall(function()
@@ -5249,6 +6055,9 @@ local TRIAL_AIM_MAX_DISTANCE = 2000  -- SeaBeast trial range tăng lên để kh
 local TRIAL_AIM_PREDICT_TIME = 0.12
 local TRIAL_AIM_BIND_NAME = "KaitunTrialAim"
 local TRIAL_AIM_HOLD = math.max(0.05, tonumber(getgenv().Config["Trial Aim Hold"]) or 0.35)
+-- Aim cho binh/mob/Tyrant: tam gan hon trial nhieu, chi can phu ban kinh
+-- attack + orbit (~105 + 40 stud) nen 260 la du va tranh aim vao vat o xa.
+local SKILL_AIM_MAX_DISTANCE = math.max(60, tonumber(getgenv().Config["Skill Aim Distance"]) or 260)
 trialAimHoldUntil = 0
 
 local previousTrialAimConnection = getgenv().__KAITUN_TRIAL_AIM_CONNECTION
@@ -5288,17 +6097,19 @@ function getTrialAimPoint(target)
 end
 
 function getTrialAimState()
-	if not _G.SHOULDSPAMSKILLS then
+	-- Truoc day chi chay khi _G.SHOULDSPAMSKILLS (trial). Nay ho tro ca
+	-- _G.SKILL_AIM_TARGET de dap binh / farm Tyrant cung aim dung target.
+	local target, isTrialTarget = getActiveAimPart()
+	if not target then
 		return nil
 	end
-	local target = _G.TRIAL_SKILL_TARGET
 	local character = Players.LocalPlayer.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	local camera = workspace.CurrentCamera
-	if not target or not target.Parent or not target:IsA("BasePart")
-		or not root or not humanoid or humanoid.Health <= 0 or not camera
-		or (root.Position - target.Position).Magnitude > TRIAL_AIM_MAX_DISTANCE
+	local maxDistance = isTrialTarget and TRIAL_AIM_MAX_DISTANCE or SKILL_AIM_MAX_DISTANCE
+	if not root or not humanoid or humanoid.Health <= 0 or not camera
+		or (root.Position - target.Position).Magnitude > maxDistance
 	then
 		return nil
 	end
@@ -5343,15 +6154,18 @@ local function moveTrialMouseTo(x, y)
 	end)
 end
 
--- Snap camera and cursor onto the Sea Beast right before each skill is fired.
-local function aimAtTrialSkillTarget()
+-- Snap camera and cursor onto the current aim target right before each skill.
+-- holdTime nil = TRIAL_AIM_HOLD (Sea Beast). Dap binh dung hold ngan hon vi
+-- muc tieu dung yen, khong can giu huong lau.
+function aimAtSkillTarget(holdTime)
 	local aimPoint, camera, root = getTrialAimState()
 	if not aimPoint or not camera then
 		return false
 	end
-	-- Mo cua so hold: RenderStep giu huong nay trong TRIAL_AIM_HOLD giay, du de
-	-- server doc dung look vector khi skill duoc thu.
-	trialAimHoldUntil = tick() + TRIAL_AIM_HOLD
+	-- Mo cua so hold: RenderStep giu huong nay trong vai frame, du de server
+	-- doc dung look vector khi skill duoc thu. Het hold, camera tu do lai ngay
+	-- nen day khong phai camera lock.
+	trialAimHoldUntil = tick() + math.max(0.03, tonumber(holdTime) or TRIAL_AIM_HOLD)
 	camera.CFrame = safeLookAt(camera.CFrame.Position, aimPoint)
 	if root and (aimPoint - root.Position).Magnitude > 0.5 then
 		root.CFrame = safeLookAt(root.Position, aimPoint)
@@ -5365,6 +6179,10 @@ local function aimAtTrialSkillTarget()
 		moveTrialMouseTo(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
 	end
 	return true
+end
+
+local function aimAtTrialSkillTarget()
+	return aimAtSkillTarget(nil)
 end
 
 -- Skill spam loop: cycle Melee   Sword   Melee li n t c, kh ng ng i ch  cooldown
