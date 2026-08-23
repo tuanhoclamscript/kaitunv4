@@ -1350,6 +1350,12 @@ function FastAttack:GetBladeHits(Character, Distance)
 	end
 	if AttackConfig.AttackMobs then
 		pcall(ProcessTargets, Workspace:WaitForChild("Enemies"))
+		-- Mob trial/arena co the nam trong _WorldOrigin.Enemies (streaming). Chi
+		-- quet Workspace.Enemies thi hit list rong -> khong co hit nao.
+		local origin = Workspace:FindFirstChild("_WorldOrigin")
+		if origin and origin:FindFirstChild("Enemies") then
+			pcall(ProcessTargets, origin.Enemies)
+		end
 	end
 	if AttackConfig.AttackPlayers then
 		pcall(ProcessTargets, Workspace:WaitForChild("Characters"))
@@ -1437,12 +1443,20 @@ function FastAttack:UseNormalClick(Character, Humanoid, Cooldown)
 	self.EnemyRootPart = nil
 	local BladeHits = self:GetBladeHits(Character)
 	if self.EnemyRootPart then
-		RegisterAttack:FireServer(Cooldown)
-		if self.CombatFlags and self.HitFunction then
-			self.HitFunction(self.EnemyRootPart, BladeHits)
-		else
-			RegisterHit:FireServer(self.EnemyRootPart, BladeHits, nil, "078da5141")
+		-- GetBladeHits giu target dau tien lam EnemyRootPart va KHONG dua no vao
+		-- BladeHits. Khi chi co 1 mob (dung canh trial Human/Ghoul) thi BladeHits
+		-- rong -> server khong ghi nhan hit nao -> "trial khong attack".
+		-- Extract.lua va TyrFastAttack deu dua ca target dau vao hit list.
+		local primary = self.EnemyRootPart.Parent
+		if primary then
+			table.insert(BladeHits, 1, {})
+			table.insert(BladeHits, 1, { primary, self.EnemyRootPart })
 		end
+		RegisterAttack:FireServer(Cooldown)
+		-- Luon ban RegisterHit kem validator. Nhanh HitFunction
+		-- (_G.SendHitsToServer) khong mang "078da5141", nen khi CombatFlags ton
+		-- tai thi toan bo hit di duong do va bi server drop.
+		RegisterHit:FireServer(self.EnemyRootPart, BladeHits, nil, "078da5141")
 	end
 end
 
@@ -2961,9 +2975,18 @@ function runCurrentRaceTrial(race, trialLocation)
 		return true
 	elseif race == "Human" or race == "Ghoul" then
 		AttackConfig.AutoClickEnabled = true
+		-- Vao trial ngay sau khi farm Tyrant thi _G.TYRANT_FARMING con true, vong
+		-- Stepped tu chan FastAttack:Attack() -> trial khong he attack.
+		_G.TYRANT_FARMING = false
 		equipTrialCombatTool()
-		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 30)
-		for _, enemy in pairs(workspace.Enemies:GetChildren()) do
+		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 20)
+		local trialEnemies = {}
+		for _, folder in ipairs(TyrGetEnemyFolders()) do
+			for _, enemy in ipairs(folder:GetChildren()) do
+				trialEnemies[#trialEnemies + 1] = enemy
+			end
+		end
+		for _, enemy in ipairs(trialEnemies) do
 			local root = enemy:FindFirstChild("HumanoidRootPart")
 			local humanoid = enemy:FindFirstChild("Humanoid")
 			if root and humanoid and humanoid.Health > 0
@@ -2980,6 +3003,14 @@ function runCurrentRaceTrial(race, trialLocation)
 						-- offset trong local-space cua mob lech theo huong mob nga,
 						-- va dung mot goc co dinh lam RegisterHit de bi drop.
 						local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
+						if orbit and (orbit.Position - root.Position).Magnitude
+							> AttackConfig.AttackDistance - 12
+						then
+							-- getExtractOrbitTarget snap vi tri ve luoi 10 stud nen
+							-- diem orbit co the bi day ra ~67 stud, vuot
+							-- AttackDistance 65 -> GetBladeHits rong.
+							orbit = nil
+						end
 						topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
 					end
 					-- Hit do FastAttack tren Stepped ban (da co validator o
