@@ -4710,60 +4710,6 @@ function runRaceTrainingWork(trainingState, roleLabel)
     end
 
     local ATTACK_RANGE = 15  -- khoảng cách đánh
-    local lastTweenAt  = 0   -- tránh tween quá thường xuyên
-    local BRING_LIMIT = math.max(1, tonumber(getgenv().Config["Training Bring Mobs"]) or 2)
-    local lastBringAt = 0
-
-    local function isTrainingMob(enemy)
-        if islandData.Mobs[enemy.Name] then
-            return true
-        end
-        local lowered = enemy.Name:lower()
-        for _, name in ipairs(mobNames) do
-            if lowered:find(name:lower(), 1, true) then
-                return true
-            end
-        end
-        return false
-    end
-
-    -- Gom toi da BRING_LIMIT mob ve sat con dang danh moi 0.1s, y het
-    -- TyrSetupBringMobs. Nhom mob dung mot cho nen orbit cua player phu
-    -- het ca nhom va BladeHits luon du target.
-    local function bringTrainingMobs(anchorRoot)
-        local now = tick()
-        if now - lastBringAt < 0.1 then
-            return
-        end
-        lastBringAt = now
-        local enemies = Workspace:FindFirstChild("Enemies")
-        if not enemies or not anchorRoot or not anchorRoot.Parent then
-            return
-        end
-        local anchorPosition = anchorRoot.Position
-        local brought = 0
-        for _, enemy in ipairs(enemies:GetChildren()) do
-            if brought >= BRING_LIMIT then
-                break
-            end
-            local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
-            if enemyRoot and enemyRoot ~= anchorRoot and checkmob_(enemy)
-                and isTrainingMob(enemy)
-                and (enemyRoot.Position - anchorPosition).Magnitude <= 400
-            then
-                pcall(function()
-                    enemyRoot.CanCollide = false
-                    enemyRoot.CFrame = CFrame.new(anchorPosition)
-                    local hum = enemy:FindFirstChildOfClass("Humanoid")
-                    if hum and hum:FindFirstChild("Animator") then
-                        hum.Animator:Destroy()
-                    end
-                    sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
-                end)
-                brought = brought + 1
-            end
-        end
-    end
 
     while not shouldStopTrainingCycle() do
         local mob = CheckMonster(table.unpack(mobNames))
@@ -4782,7 +4728,7 @@ function runRaceTrainingWork(trainingState, roleLabel)
                     local currentCharacter = Players.LocalPlayer.Character
                     local energy = currentCharacter and currentCharacter:FindFirstChild("RaceEnergy")
 					local transformed = currentCharacter and currentCharacter:FindFirstChild("RaceTransformed")
-                    -- Khi  ang bi n h nh V4   D NG  nh, bay l n cao ch  h t transform
+                    -- Khi đang biến hình V4 thì DỪNG đánh, bay lên cao chờ hết transform
                     if transformed and transformed.Value then
                         AttackConfig.AutoClickEnabled = false
                         status(roleLabel .. " [" .. tostring(islandName) .. "] wait transform end")
@@ -4791,17 +4737,8 @@ function runRaceTrainingWork(trainingState, roleLabel)
                     end
                     AttackConfig.AutoClickEnabled = true
                     status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
-                    -- Dung dung co che attack cua trial Human/Ghoul: bay vong
-                    -- quanh tren dau mob bang getExtractOrbitTarget. Orbit radius
-                    -- 40 + height 15 -> ~43 stud, con trong AttackConfig
-                    -- .AttackDistance 65 nen FastAttack tren Stepped luon co
-                    -- target trong BladeHits.
                     local hrp = mob:FindFirstChild("HumanoidRootPart")
                     if hrp then
-                        -- Keo mob khac ve SAT CON DANG DANH (khong keo ve duoi
-                        -- chan player): keo ve player thi mob chay theo orbit va
-                        -- luon lech 40 stud -> khong bao gio vao tam.
-                        bringTrainingMobs(hrp)
                         topos(getExtractOrbitTarget(hrp.CFrame, ATTACK_RANGE)
                             or (hrp.CFrame * CFrame.new(0, ATTACK_RANGE, 0)))
                     end
