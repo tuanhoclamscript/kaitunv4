@@ -1,3 +1,4 @@
+local getgenv = getgenv or function() return _G end
 print("[v4] script start")
 getgenv().Config = {
 	["Team"] = "Marines",
@@ -4775,24 +4776,25 @@ end
 
 task.spawn(function()
 	while task.wait(0.1) do
+		repeat
 		if not isUper and not isAlly then
 			status("Set Main or Help = true")
 			task.wait(2)
-			continue
+			break
 		end
 		if postTrialTransitionInProgress then
 			status("Post-Trial reset teleport in progress")
 			task.wait(0.2)
-			continue
+			break
 		end
 		if trialCycleDone then
 			pcall(runTrialCompletionBarrier)
 			task.wait(0.25)
-			continue
+			break
 		end
 		if trialCompletedHoldUntil == math.huge then
 			task.wait(0.2)
-			continue
+			break
 		end
 		if trialRetryPending then
 			local character = Players.LocalPlayer.Character
@@ -4806,14 +4808,14 @@ task.spawn(function()
 				end
 			end
 			task.wait(0.2)
-			continue
+			break
 		end
 		-- The independent worker performs the trial; this branch only prevents
 		-- pairing/training movement from competing with it.
 		local trialCheckOk, insideActiveTrial = pcall(isNearOwnTrialArena)
 		if trialCheckOk and insideActiveTrial then
 			task.wait(0.1)
-			continue
+			break
 		end
 		--  
 		-- [FIX] V4 STATE   matchState.assigned (inline trong loop)
@@ -4838,12 +4840,12 @@ task.spawn(function()
 				task.wait(1)
 			end
 			task.wait(0.2)
-			continue
+			break
 		end
 		if matchState.main_job_id and matchState.main_job_id ~= game.JobId then
 			status("Joining matched Main server")
 			task.wait(1)
-			continue
+			break
 		end
 		local pairedV4State = getV4Status(false)
 		-- B  getV4Status(true): canTrial v  needsTraining kh ng x y ra  ng th i, call n y blocking g y gi t
@@ -4870,7 +4872,7 @@ task.spawn(function()
 				pcall(checkgear)
 				task.wait(0.45)
 				beginPostTrialFarmTransition("trial_completed")
-				continue
+				break
 			end
 			if pairedV4State.complete then
 				if tyrantFarmingActive then
@@ -4895,7 +4897,7 @@ task.spawn(function()
 					status("⚠ pair train err: " .. tostring(terr):sub(1, 50))
 				end
 			end
-			continue
+			break
 		end
 		local fullMoonNow = isnight() and isfullmoon()
 		if not fullMoonNow then
@@ -4911,7 +4913,7 @@ task.spawn(function()
 					status("⚠ training err: " .. tostring(werr):sub(1, 60))
 				end
 				task.wait(0.2)
-				continue
+				break
 			end
 			local trialCycleConfirmed = pairTrialCycleStarted
 				or pairV3ActivatedAt > 0
@@ -4925,7 +4927,7 @@ task.spawn(function()
 				status("Full Moon ended - waiting leader to release pair")
 			end
 			task.wait(1)
-			continue
+			break
 		end
 		if tyrantFarmingActive then
 			stopTyrantFarming()
@@ -4955,7 +4957,7 @@ task.spawn(function()
 					else
 						releaseCurrentGroup("temple_ready_timeout")
 						task.wait(1)
-						continue
+						break
 					end
 				end
 			end
@@ -5067,6 +5069,7 @@ task.spawn(function()
 				task.wait(0.2)
 			end
 		end
+		until true
 	end
 end)
 
@@ -5273,7 +5276,7 @@ task.spawn(function()
 		return char:FindFirstChild(tool.Name)
 	end
 
-	-- Spam t t c  skill c n s n c a tool  ang equip, tr  v  s  skill   fire
+	-- Spam tat ca skill san sang cua tool dang equip
 	local function spamAllReadySkills(toolName)
 		local skillsGui = Players.LocalPlayer.PlayerGui:FindFirstChild("Main")
 			and Players.LocalPlayer.PlayerGui.Main:FindFirstChild("Skills")
@@ -5281,58 +5284,56 @@ task.spawn(function()
 		if not ui then return 0 end
 		local fired = 0
 		for _, vl in pairs(ui:GetChildren()) do
-			if not isvalidnameui[vl.Name] then continue end
-			local cdFrame = vl:FindFirstChild("Cooldown")
-			local titleFrame = vl:FindFirstChild("Title")
-			if not cdFrame or not titleFrame then continue end
-			local titleReady = titleFrame.TextColor3 == Color3.new(1, 1, 1)
-				or titleFrame.TextColor3 == Color3.fromRGB(255, 255, 255)
-			-- Cooldown bar = 0 size ngh a l  skill s n s ng
-			local cdReady = cdFrame.Size.X.Scale == 0 and cdFrame.Size.X.Offset == 0
-			if not (titleReady and cdReady) then continue end
-			aimAtTrialSkillTarget()
-			task.wait(0.02)
-			if vl.Name == "V" then
-				if not fruits[ui.Name] then
-					VirtualInputManager:SendKeyEvent(true, "V", false, game)
-					task.wait(0.05)
-					VirtualInputManager:SendKeyEvent(false, "V", false, game)
-					fired = fired + 1
+			if isvalidnameui[vl.Name] then
+				local cdFrame = vl:FindFirstChild("Cooldown")
+				local titleFrame = vl:FindFirstChild("Title")
+				if cdFrame and titleFrame then
+					local titleReady = titleFrame.TextColor3 == Color3.new(1, 1, 1)
+						or titleFrame.TextColor3 == Color3.fromRGB(255, 255, 255)
+					local cdReady = cdFrame.Size.X.Scale == 0 and cdFrame.Size.X.Offset == 0
+					if titleReady and cdReady then
+						aimAtTrialSkillTarget()
+						task.wait(0.02)
+						if vl.Name == "V" then
+							if not fruits[ui.Name] then
+								VirtualInputManager:SendKeyEvent(true, "V", false, game)
+								task.wait(0.05)
+								VirtualInputManager:SendKeyEvent(false, "V", false, game)
+								fired = fired + 1
+							end
+						else
+							VirtualInputManager:SendKeyEvent(true, vl.Name, false, game)
+							task.wait(0.05)
+							VirtualInputManager:SendKeyEvent(false, vl.Name, false, game)
+							fired = fired + 1
+						end
+						task.wait(0.03)
+					end
 				end
-			else
-				VirtualInputManager:SendKeyEvent(true, vl.Name, false, game)
-				task.wait(0.05)
-				VirtualInputManager:SendKeyEvent(false, vl.Name, false, game)
-				fired = fired + 1
 			end
-			task.wait(0.03)
 		end
 		return fired
 	end
 
 	while task.wait(0.05) do
-		if not _G.SHOULDSPAMSKILLS then continue end
-		local char = Players.LocalPlayer.Character
-		if not char then continue end
-		local hum = char:FindFirstChildOfClass("Humanoid")
-		if not hum or hum.Health <= 0 then continue end
+		if _G.SHOULDSPAMSKILLS then
+			local char = Players.LocalPlayer.Character
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if hum and hum.Health > 0 then
+				local meleeT = findToolByTip("Melee")
+				local swordT = findToolByTip("Sword")
 
-		-- L y danh s ch weapon c n cycle: lu n Melee, th m Sword n u c 
-		local meleeT = findToolByTip("Melee")
-		local swordT = findToolByTip("Sword")
-
-		-- Cycle qua t ng weapon: Melee tr c, Sword sau
-		for _, weaponTip in ipairs({"Melee", "Sword"}) do
-			if not _G.SHOULDSPAMSKILLS then break end
-			local tool = weaponTip == "Melee" and meleeT or swordT
-			if not tool then continue end  -- không có weapon này thì bỏ qua
-
-			-- Equip weapon
-			local equipped = equipTool(tool)
-			if not equipped then continue end
-
-			-- Spam h t skill s n c a weapon n y
-			spamAllReadySkills(equipped.Name)
+				for _, weaponTip in ipairs({"Melee", "Sword"}) do
+					if not _G.SHOULDSPAMSKILLS then break end
+					local tool = weaponTip == "Melee" and meleeT or swordT
+					if tool then
+						local equipped = equipTool(tool)
+						if equipped then
+							spamAllReadySkills(equipped.Name)
+						end
+					end
+				end
+			end
 		end
 	end
 end)
