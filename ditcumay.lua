@@ -3184,6 +3184,12 @@ equipTrialCombatTool = function()
 end
 
 local function resetFailedTrialAttempt(reason)
+	if trialCycleDone then
+		-- Trial cua minh da xong: reset o day se xoa trialCycleDone (qua
+		-- resetTrialBarrierState) va keo account bay ve cua trial giua luc
+		-- dang phai dung im doi ca nhom.
+		return
+	end
 	trialFailureGeneration = trialFailureGeneration + 1
 	trialAutomationBusy = false
 	trialRaceLock = nil
@@ -3277,12 +3283,18 @@ function evaluateOwnTrialCompletion(insideArena)
 	if isFFAActive() then
 		return true, "ffa_started"
 	end
+	local elapsed = tick() - trialStartedAt
+	if not insideArena and elapsed > 6 then
+		-- Phai xet TRUOC getTrialTimerVisible(): PlayerGui.Main.Timer
+		-- ("Time Left") van hien khi dang dung trong Temple, nen nhanh timer
+		-- ben duoi return false vinh vien -> khong bao gio ket luan la xong.
+		return true, "left_arena"
+	end
 	if getTrialTimerVisible() then
 		trialTimerSeen = true
 		trialTimerLostAt = 0
 		return false
 	end
-	local elapsed = tick() - trialStartedAt
 	if trialTimerSeen then
 		if trialTimerLostAt == 0 then
 			trialTimerLostAt = tick()
@@ -3290,9 +3302,6 @@ function evaluateOwnTrialCompletion(insideArena)
 			return true, "timer_ended"
 		end
 		return false
-	end
-	if not insideArena and elapsed > 8 then
-		return true, "left_arena"
 	end
 	if elapsed > 45 then
 		return true, "timeout"
@@ -3382,12 +3391,29 @@ function refreshGroupTrialProgress()
 		else
 			local other = Players:FindFirstChild(name)
 			if other then
+				local otherCharacter = other.Character
+				local otherHumanoid = otherCharacter
+					and otherCharacter:FindFirstChildOfClass("Humanoid")
 				if isPlayerInsideAnyTrialArena(other) then
 					groupTrialSeenInsideAt[name] = tick()
 					groupTrialDoneAt[name] = nil
-				elseif (groupTrialSeenInsideAt[name] or roundStarted) and isPlayerBackInTemple(other) then
+				elseif groupTrialSeenInsideAt[name]
+					and tick() - groupTrialSeenInsideAt[name] > 2
+				then
+					-- Da thay no trong arena, gio khong con -> trial cua no da
+					-- ket thuc. Khong doi isPlayerBackInTemple nua: helper tu
+					-- reset sau trial se respawn o dao spawn, khong bao gio
+					-- "back in temple" -> barrier treo vinh vien.
+					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
+				elseif roundStarted and (isPlayerBackInTemple(other)
+					or (otherHumanoid ~= nil and otherHumanoid.Health <= 0))
+				then
 					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
 				end
+			elseif roundStarted then
+				-- Thanh vien roi server: coi nhu xong, neu khong barrier doi
+				-- mot nguoi khong con ton tai.
+				groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
 			end
 		end
 		if groupTrialDoneAt[name] then
@@ -3404,9 +3430,16 @@ function isGroupTrialBarrierReached()
 		return true, "ffa_started"
 	end
 	-- Ki m tra n u c  b t k  ng i ch i n o trong server v n c n  ang   trong ph ng trial
+	-- Chi xet thanh vien trong nhom. Truoc day quet moi player trong server:
+	-- mot nguoi ngoai nhom dang lam trial rieng se chan barrier den khi
+	-- TRIAL_BARRIER_TIMEOUT (240s) het gio.
+	local groupMemberNames = {}
+	for _, name in ipairs(currentGroupMembers()) do
+		groupMemberNames[name] = true
+	end
 	local anyoneInsideArena = false
 	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= Player and isPlayerInsideAnyTrialArena(p) then
+		if p ~= Player and groupMemberNames[p.Name] and isPlayerInsideAnyTrialArena(p) then
 			anyoneInsideArena = true
 			break
 		end
@@ -3571,20 +3604,29 @@ task.spawn(function()
 				trialCharacterReplacedAt = 0
 				resetFailedTrialAttempt("died")
 			elseif replaced then
+				local newRoot = currentCharacter:FindFirstChild("HumanoidRootPart")
+				local ownArena = races_trial_place[trialRaceLock]
+				local outsideArena = newRoot == nil or ownArena == nil
+					or (newRoot.Position - ownArena.Position).Magnitude > 1800
+				local elapsed = trialStartedAt > 0 and (tick() - trialStartedAt) or 0
 				if isFFAActive() then
 					trialCharacterReplacedAt = 0
 					markOwnTrialCompleted("ffa_started")
-				elseif trialTimerSeen and not getTrialTimerVisible() then
-					-- Cho evaluateOwnTrialCompletion() (2s timer-lost) ket luan.
+				elseif outsideArena and elapsed > 5 then
+					-- Het trial thi game thay character va day minh ra khoi
+					-- arena. Truoc day nhanh nay goi resetFailedTrialAttempt
+					-- ("respawned") vi Main.Timer van hien -> trialCycleDone
+					-- bi xoa, barrier khong bao gio chay, account bay ve cua
+					-- trial va ket o do.
+					trialCharacterReplacedAt = 0
+					markOwnTrialCompleted("teleported_out")
+				else
 					if trialCharacterReplacedAt == 0 then
 						trialCharacterReplacedAt = tick()
 					elseif tick() - trialCharacterReplacedAt > 3 then
 						trialCharacterReplacedAt = 0
 						resetFailedTrialAttempt("respawned")
 					end
-				else
-					trialCharacterReplacedAt = 0
-					resetFailedTrialAttempt("respawned")
 				end
 			else
 				trialCharacterReplacedAt = 0
