@@ -428,14 +428,14 @@ function module:haki()
 	end
 end
 
-local smoothTweenId = 0
-local smoothTweenRunning = false
-local smoothTweenTarget = nil
-local smoothTweenSpeed = 200
-local tweenNoclipConnection = nil
-local tweenCollisionStates = {}
-local extractOrbitAngle = 30
-local extractOrbitLastChange = tick()
+smoothTweenId = 0
+smoothTweenRunning = false
+smoothTweenTarget = nil
+smoothTweenSpeed = 200
+tweenNoclipConnection = nil
+tweenCollisionStates = {}
+extractOrbitAngle = 30
+extractOrbitLastChange = tick()
 
 local function setTweenNoclip(enabled)
 	if enabled then
@@ -1671,30 +1671,30 @@ task.spawn(function()
 	end
 end)
 
-local mainJobId = game.JobId
-local matchTeleportAt = 0
-local scheduledRoundId = ""
-local handledRoundId = ""
-local lastReadyWrite = 0
-local currentTaskStatus = "starting"
-local pairAssignedAt = tick()
-local pairAllInJobAt = tick()
-local pairTempleReadyAt = 0
-local lastTempleReadyCount = 0
-local lastPairGroupId = localGroupId
-local localRequeueBlockUntil = 0
-local releasingGroup = false
-local gearClaimInProgress = false
-local lastTempleForceAt = 0
-local lastTempleProgressAt = 0
-local lastTempleDistance = math.huge
-local pairTrialCycleStarted = false
-local pairV3ActivatedAt = 0
-local failedRoundId = ""
-local helperSacrificeDone = false
-local postTrialTransitionInProgress = false
-local lastPostTrialTransitionAt = 0
-local lastTrialActionAt = 0
+mainJobId = game.JobId
+matchTeleportAt = 0
+scheduledRoundId = ""
+handledRoundId = ""
+lastReadyWrite = 0
+currentTaskStatus = "starting"
+pairAssignedAt = tick()
+pairAllInJobAt = tick()
+pairTempleReadyAt = 0
+lastTempleReadyCount = 0
+lastPairGroupId = localGroupId
+localRequeueBlockUntil = 0
+releasingGroup = false
+gearClaimInProgress = false
+lastTempleForceAt = 0
+lastTempleProgressAt = 0
+lastTempleDistance = math.huge
+pairTrialCycleStarted = false
+pairV3ActivatedAt = 0
+failedRoundId = ""
+helperSacrificeDone = false
+postTrialTransitionInProgress = false
+lastPostTrialTransitionAt = 0
+lastTrialActionAt = 0
 local PAIR_TEMPLE_TIMEOUT = math.max(15, tonumber(getgenv().Config["Pair Temple Timeout"]) or 35)
 local stickyPairSetting = getgenv().Config["Pair Sticky Until Trial Complete"]
 if stickyPairSetting == nil then
@@ -2906,13 +2906,13 @@ function findTrialPart(race, trialLocation, preferredNames)
 	return best
 end
 
-local trialAutomationBusy = false
-local trialRaceLock = nil
-local trialStartedAt = 0
-local trialCompletedHoldUntil = 0
-local trialAttemptCharacter = nil
-local trialFailureGeneration = 0
-local trialRetryPending = false
+trialAutomationBusy = false
+trialRaceLock = nil
+trialStartedAt = 0
+trialCompletedHoldUntil = 0
+trialAttemptCharacter = nil
+trialFailureGeneration = 0
+trialRetryPending = false
 local equipTrialCombatTool
 local TRIAL_BARRIER_TIMEOUT = math.max(60, tonumber(getgenv().Config["Trial Barrier Timeout"]) or 240)
 
@@ -5630,7 +5630,7 @@ end)
 -- Keep this block after the V4/trial helpers so background tasks can safely
 -- inspect the current farming state before accepting a teleport.
 -- ============================================================
-do
+task.spawn(function()
 	local coordinatorConfig = getgenv().Config or {}
 	local fullMoonApiUrl = tostring(coordinatorConfig["Full Moon API URL"] or "https://vortexz-hub.xyz/fullmoon")
 	local fullMoonPollInterval = math.max(10, tonumber(coordinatorConfig["Full Moon Poll Interval"]) or 15)
@@ -6317,4 +6317,4 @@ do
 			task.wait(fullMoonPollInterval)
 		end
 	end)
-end
+end)
