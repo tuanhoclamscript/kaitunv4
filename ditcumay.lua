@@ -3141,11 +3141,12 @@ function runCurrentRaceTrial(race, trialLocation)
 			local bestBeast, bestPart, bestHealth, bestDistance = nil, nil, 0, math.huge
 			for _, candidate in ipairs(candidates) do
 				if candidate:IsA("Model") and candidate ~= character then
-					local candidateRoot = candidate:FindFirstChild("HumanoidRootPart")
-						or candidate:FindFirstChild("Head")
-						or candidate:FindFirstChild("Torso")
-						or candidate.PrimaryPart
-						or candidate:FindFirstChildWhichIsA("BasePart")
+						local candidateRoot = candidate:FindFirstChild("Hitbox")
+							or candidate:FindFirstChild("Head")
+							or candidate:FindFirstChild("HumanoidRootPart")
+							or candidate:FindFirstChild("Torso")
+							or candidate.PrimaryPart
+							or candidate:FindFirstChildWhichIsA("BasePart")
 					local hum = candidate:FindFirstChildOfClass("Humanoid")
 					local healthVal = candidate:FindFirstChild("Health")
 					local hp = (hum and hum.Health)
@@ -3172,11 +3173,13 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
-		-- Hover 25-30 studs ngay tren dau Sea Beast de M1, FastAttack va Skill deu trung 100%
-		local hoverHeight = 28
-		local function getSeaBeastStandCFrame(targetRoot)
-			return targetRoot.CFrame * CFrame.new(0, hoverHeight, 0)
-		end
+			local hoverHeight = math.max(40, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 45)
+			local standOffset = math.max(20, tonumber(getgenv().Config["Fish Trial Stand Offset"]) or 45)
+			local function getSeaBeastStandCFrame(targetRoot)
+				local back = -targetRoot.CFrame.LookVector * standOffset
+				local position = targetRoot.Position + back + Vector3.new(0, hoverHeight, 0)
+				return safeLookAt(position, getTrialAimPoint(targetRoot) or targetRoot.Position)
+			end
 
 		local character = Players.LocalPlayer.Character
 		local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
@@ -3214,7 +3217,7 @@ function runCurrentRaceTrial(race, trialLocation)
 
 				ownRoot = attemptCharacter and attemptCharacter:FindFirstChild("HumanoidRootPart")
 				if ownRoot then
-					ownRoot.CFrame = safeLookAt(ownRoot.Position, root.Position)
+					ownRoot.CFrame = safeLookAt(ownRoot.Position, getTrialAimPoint(root) or root.Position)
 				end
 
 				-- Xa FastAttack va danh lien tuc
@@ -3405,7 +3408,7 @@ function evaluateOwnTrialCompletion(insideArena)
 		return true, "ffa_started"
 	end
 	local elapsed = tick() - trialStartedAt
-	if not insideArena and elapsed > 6 then
+	if not insideArena and elapsed > 8 and (trialTimerSeen or isFFAActive()) then
 		-- Phai xet TRUOC getTrialTimerVisible(): PlayerGui.Main.Timer
 		-- ("Time Left") van hien khi dang dung trong Temple, nen nhanh timer
 		-- ben duoi return false vinh vien -> khong bao gio ket luan la xong.
@@ -3424,7 +3427,7 @@ function evaluateOwnTrialCompletion(insideArena)
 		end
 		return false
 	end
-	if elapsed > 45 then
+	if elapsed > 90 and trialTimerSeen then
 		return true, "timeout"
 	end
 	return false
@@ -3486,10 +3489,12 @@ end
 function isPlayerInsideAnyTrialArena(plr)
 	local character = plr and plr.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not root then
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not root or not humanoid or humanoid.Health <= 0 then
 		return false
 	end
-	for _, location in pairs(races_trial_place) do
+	for raceName, _ in pairs(trial_location_names) do
+		local location = races_trial_place[raceName]
 		if location and (root.Position - location.Position).Magnitude < 1800 then
 			return true
 		end
@@ -3529,14 +3534,15 @@ function refreshGroupTrialProgress()
 			if other then
 				local otherCharacter = other.Character
 				local otherHumanoid = otherCharacter and otherCharacter:FindFirstChildOfClass("Humanoid")
+				local seenInsideAt = groupTrialSeenInsideAt[name]
 				if isPlayerInsideAnyTrialArena(other) then
 					groupTrialSeenInsideAt[name] = tick()
 					groupTrialDoneAt[name] = nil
-				elseif groupTrialSeenInsideAt[name]
-					and tick() - groupTrialSeenInsideAt[name] > 2
+				elseif seenInsideAt
+					and tick() - seenInsideAt > 4
 					and otherHumanoid and otherHumanoid.Health > 0
+					and isPlayerBackInTemple(other)
 				then
-					-- Da vao arena danh va song sot ra ngoai -> hoan thanh trial
 					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
 				end
 			end
@@ -3734,7 +3740,7 @@ task.spawn(function()
 				if isFFAActive() then
 					trialCharacterReplacedAt = 0
 					markOwnTrialCompleted("ffa_started")
-				elseif outsideArena and elapsed > 5 then
+				elseif outsideArena and elapsed > 8 and (trialTimerSeen or isFFAActive()) then
 					-- Het trial thi game thay character va day minh ra khoi
 					-- arena. Truoc day nhanh nay goi resetFailedTrialAttempt
 					-- ("respawned") vi Main.Timer van hien -> trialCycleDone
@@ -6329,7 +6335,7 @@ function getTrialAimPoint(target)
 		return nil
 	end
 	if target:IsA("Model") then
-		local head = target:FindFirstChild("Head") or target:FindFirstChild("Hitbox") or target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
+		local head = target:FindFirstChild("Hitbox") or target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
 		if head and head:IsA("BasePart") then
 			return head.Position
 		end
@@ -6337,7 +6343,7 @@ function getTrialAimPoint(target)
 	if target:IsA("BasePart") then
 		local parent = target.Parent
 		if parent and parent:IsA("Model") then
-			local head = parent:FindFirstChild("Head") or parent:FindFirstChild("Hitbox")
+			local head = parent:FindFirstChild("Hitbox") or parent:FindFirstChild("Head")
 			if head and head:IsA("BasePart") then
 				return head.Position
 			end
