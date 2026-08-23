@@ -4100,14 +4100,15 @@ function TyrLoadAttack()
 end
 
 -- aimPart: dat _G.SKILL_AIM_TARGET trong suot duration de moi click chuot
--- deu ban theo huong toi muc tieu (binh/mob), thay vi huong camera hien tai.
+-- deu ban theo huong toi muc tieu (binh/mob), quay than nhan vat (khong can thiep chuot/camera).
 function TyrNormalAttack(duration, aimPart)
 	local char = LocalPlayer.Character
 	if not char then
 		return
 	end
 	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not hum then
+	local root = char:FindFirstChild("HumanoidRootPart")
+	if not hum or not root then
 		return
 	end
 	local previousAim = _G.SKILL_AIM_TARGET
@@ -4121,7 +4122,8 @@ function TyrNormalAttack(duration, aimPart)
 			if not aimPart.Parent then
 				break
 			end
-			aimAtSkillTarget(0.18)
+			-- Quay nhan vat ve huong target (khong lock chuot vat ly, khong giat camera)
+			root.CFrame = safeLookAt(root.Position, aimPart.Position)
 		end
 		local tool = hum and char:FindFirstChildWhichIsA("Tool")
 		if tool then
@@ -4317,9 +4319,7 @@ function isSkillKeyReady(toolName, key)
 	return titleReady and cooldownReady
 end
 
--- aimPart: khi co, aim lai truoc TUNG phim thay vi ban theo huong cu. Server
--- doc look vector tai thoi diem nhan phim, nen aim mot lan cho ca 3 skill se
--- lech ngay khi tween/camera nhich.
+-- aimPart: khi co, quay than nhan vat ve target truoc moi skill (khong can thiep chuot/camera)
 function TyrSpamMeleeSkills(aimPart)
 	local melee = TyrEquipMeleeFromBackpack()
 	if not melee then return false end
@@ -4328,10 +4328,12 @@ function TyrSpamMeleeSkills(aimPart)
 		_G.SKILL_AIM_TARGET = aimPart
 	end
 	local fired = 0
+	local char = LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
 	for _, key in ipairs({"Z", "X", "C"}) do
 		if isSkillKeyReady(melee.Name, key) then
-			if _G.SKILL_AIM_TARGET then
-				aimAtSkillTarget(0.18)
+			if _G.SKILL_AIM_TARGET and root and _G.SKILL_AIM_TARGET.Parent then
+				root.CFrame = safeLookAt(root.Position, _G.SKILL_AIM_TARGET.Position)
 			end
 			VirtualInputManager:SendKeyEvent(true, key, false, game)
 			VirtualInputManager:SendKeyEvent(false, key, false, game)
@@ -4397,9 +4399,46 @@ function TyrFarmEnemy(enemy, isBoss)
 	TyrState.CurrentTarget = nil
 end
 
+-- Hop server helper khi binh bi bug/khong the vo
+function TyrHopServer(reason)
+	status("Hopping server: " .. tostring(reason or "vase unbroken"))
+	module:stopTween()
+	_G.SHOULDSPAMSKILLS = false
+	TyrState.Farming = false
+	_G.TYRANT_FARMING = false
+	task.spawn(function()
+		task.wait(0.3)
+		local ok, ServerBrowser = pcall(function()
+			return ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
+		end)
+		if ok and ServerBrowser then
+			for i = 1, 100 do
+				local ok2, servers = pcall(function()
+					return ServerBrowser:InvokeServer(i)
+				end)
+				if ok2 and type(servers) == "table" then
+					for jobId, info in pairs(servers) do
+						local count = type(info) == "table" and (info.Count or info.count or 0) or tonumber(info) or 0
+						if jobId ~= game.JobId and count < 12 and count >= 1 then
+							pcall(function()
+								ServerBrowser:InvokeServer("teleport", jobId)
+							end)
+							task.wait(1)
+							return
+						end
+					end
+				end
+			end
+		end
+		-- Fallback to TeleportService
+		pcall(function()
+			TeleportService:Teleport(game.PlaceId, Player)
+		end)
+	end)
+end
+
 -- Bam vao 1 binh cho den khi no thuc su bien mat (Parent == nil) hoac het
--- thoi gian. Server lag lam skill/hit bi drop nen phai kiem tra ket qua thay
--- vi ban mot loat roi di.
+-- thoi gian. Tra ve true neu binh da vo, false neu het thoi gian ma khong vo.
 local VASE_MAX_TIME = 6
 local VASE_REACH = 35
 
@@ -4407,7 +4446,7 @@ function TyrBreakSingleVase(data, deadline)
 	local part = data and data.Part
 	local object = data and data.Object
 	if not part or not part.Parent then
-		return false
+		return true
 	end
 	local speed = getgenv().TyrantConfig.TweenSpeed
 	local started = tick()
@@ -4416,7 +4455,7 @@ function TyrBreakSingleVase(data, deadline)
 		if object and not object.Parent then
 			return true
 		end
-		if not part.Parent then
+		if not part or not part.Parent then
 			return true
 		end
 		return false
@@ -4454,7 +4493,8 @@ function TyrBreakSingleVase(data, deadline)
 			end)
 			task.wait(0.08)
 		else
-			-- Aim vao binh truoc moi lan ban de skill khong bay lech
+			-- Quay than nhan vat huong ve binh (khong can thiep vao chuot vat ly hay camera)
+			root.CFrame = safeLookAt(root.Position, part.Position)
 			TyrSpamMeleeSkills(part)
 			if vaseGone() then
 				return true
@@ -4479,6 +4519,7 @@ function TyrBreakVases(force, deadline)
 	end
 	task.wait(0.5)
 	local round = 0
+	local consecutiveFails = 0
 	local function keepBreaking()
 		if TyrFindTyrant() then
 			return false
@@ -4489,7 +4530,7 @@ function TyrBreakVases(force, deadline)
 		return (TyrAreTyrantEyesReady())
 	end
 	while keepBreaking() do
-		local breakables = TyrGetArenaBreakables()
+		local breakables = TyrGetArenaBreakables(true)
 		if #breakables > 0 then
 			for _, data in ipairs(breakables) do
 				if TyrFindTyrant() then
@@ -4498,7 +4539,18 @@ function TyrBreakVases(force, deadline)
 					return
 				end
 				if data.Part and data.Part.Parent then
-					TyrBreakSingleVase(data, deadline)
+					local success = TyrBreakSingleVase(data, deadline)
+					if success then
+						consecutiveFails = 0
+					else
+						consecutiveFails = consecutiveFails + 1
+						status("Vase failed to break (" .. consecutiveFails .. " failed)")
+						-- Neu 2 binh lien tiep danh mai khong vo (server bug/bat tu/desync) -> hop server ngay
+						if consecutiveFails >= 2 then
+							TyrHopServer("Vases unbroken (server bugged/desynced)")
+							return
+						end
+					end
 				end
 			end
 		end
@@ -4519,6 +4571,13 @@ function TyrBreakVases(force, deadline)
 		TyrTweenTo(CFrame.new(ARENA_CENTER + Vector3.new(0, 8, 0)), getgenv().TyrantConfig.TweenSpeed, true)
 		TyrNormalAttack(1)
 		task.wait(0.8)
+
+		-- Sau 2 round quét quanh arena ma van con binh chua vo duoc -> hop server
+		local remaining = TyrGetArenaBreakables(true)
+		if #remaining > 0 and round >= 2 and consecutiveFails > 0 then
+			TyrHopServer("Arena vases unbreakable after " .. round .. " rounds")
+			return
+		end
 	end
 	-- D n noclip khi tho t vase loop
 	_G.SHOULDSPAMSKILLS = false
@@ -4667,6 +4726,9 @@ function stopTyrantFarming()
 	_G.TYRANT_FARMING = false
 	TyrState.CurrentMode = "STARTING"
 	tyrantFarmingTask = nil
+	-- Cancel bất kỳ tween đang chạy tới TIKI_CENTER để tránh acc trôi về Tiki
+	-- khi loop farming bị dừng giữa chừng (VD: chuyển sang training island).
+	module:stopTween()
 end
 
 -- ===================== RAID FRAGMENT FARMING =====================
@@ -5274,6 +5336,30 @@ function RaidRunOnce(targetFragments)
 			-- Mua that bai (cooldown/het beli): thu quy doi fruit < 1M
 			status("Chip buy failed (" .. tostring(err) .. ") - trying fruit trade")
 			if RaidLoadFruitForChip() then
+				-- Game yêu cầu physical fruit phải được EQUIPPED (cầm trên tay)
+				-- khi gọi RaidsNpc Select để bypass cooldown. LoadFruit đưa fruit
+				-- vào Backpack nhưng chưa equip → phải equip trước khi mua lại.
+				pcall(function()
+					local character = LocalPlayer.Character
+					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+					local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+					if humanoid and backpack then
+						for _, tool in ipairs(backpack:GetChildren()) do
+							if tool:IsA("Tool") then
+								local tip = string.lower(tostring(tool.ToolTip or ""))
+								local toolName = tostring(tool.Name or "")
+								local isFruit = tip:find("fruit", 1, true) ~= nil
+									or toolName:find("Fruit", 1, true) ~= nil
+									or tool:FindFirstChild("Fruit") ~= nil
+								if isFruit then
+									humanoid:EquipTool(tool)
+									break
+								end
+							end
+						end
+					end
+				end)
+				task.wait(0.3)
 				local bought2 = RaidBuyChip(5)
 				if not bought2 then
 					RaidFarming.RetryAt = os.time() + 60
@@ -6141,8 +6227,6 @@ function getTrialAimPoint(target)
 end
 
 function getTrialAimState()
-	-- Truoc day chi chay khi _G.SHOULDSPAMSKILLS (trial). Nay ho tro ca
-	-- _G.SKILL_AIM_TARGET de dap binh / farm Tyrant cung aim dung target.
 	local target, isTrialTarget = getActiveAimPart()
 	if not target then
 		return nil
@@ -6150,9 +6234,8 @@ function getTrialAimState()
 	local character = Players.LocalPlayer.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local camera = workspace.CurrentCamera
 	local maxDistance = isTrialTarget and TRIAL_AIM_MAX_DISTANCE or SKILL_AIM_MAX_DISTANCE
-	if not root or not humanoid or humanoid.Health <= 0 or not camera
+	if not root or not humanoid or humanoid.Health <= 0
 		or (root.Position - target.Position).Magnitude > maxDistance
 	then
 		return nil
@@ -6161,66 +6244,33 @@ function getTrialAimState()
 	if not aimPoint then
 		return nil
 	end
-	return aimPoint, camera, root
+	return aimPoint, root, isTrialTarget
 end
 
--- KHONG phai lock camera. Ngoai cua so hold, bind nay return ngay va camera
--- tu do binh thuong. Chi trong TRIAL_AIM_HOLD giay sau moi phat skill no moi
--- chong lai camera script mac dinh (ghi CurrentCamera.CFrame moi RenderStepped)
--- de skill bay dung vao Sea Beast tu do cao 500 stud.
-RunService:BindToRenderStep(TRIAL_AIM_BIND_NAME, Enum.RenderPriority.Camera.Value + 1, function()
+-- Aimbot chi xoay than nhan vat (HumanoidRootPart), TUYET DOI KHONG can thiep
+-- vao Camera.CFrame hoac chuot vat ly cua nguoi dung (moveTrialMouseTo / SendMouseMoveEvent).
+RunService:BindToRenderStep(TRIAL_AIM_BIND_NAME, Enum.RenderPriority.Character.Value + 1, function()
 	if tick() >= trialAimHoldUntil then
 		return
 	end
-	local aimPoint, camera, root = getTrialAimState()
-	if not aimPoint then
+	local aimPoint, root = getTrialAimState()
+	if not aimPoint or not root then
 		return
 	end
-	camera.CFrame = safeLookAt(camera.CFrame.Position, aimPoint)
-	-- Skill bay theo look vector cua nhan vat, nen than phai chuc xuong beast:
-	-- rotation phang tu tren cao se ban vot qua.
-	if (aimPoint - root.Position).Magnitude > 1 then
+	if (aimPoint - root.Position).Magnitude > 0.5 then
 		root.CFrame = safeLookAt(root.Position, aimPoint)
 	end
 end)
 
-local function moveTrialMouseTo(x, y)
-	local insetX, insetY = 0, 0
-	pcall(function()
-		local inset = game:GetService("GuiService"):GetGuiInset()
-		insetX, insetY = inset.X, inset.Y
-	end)
-	if typeof(mousemoveabs) == "function" and pcall(mousemoveabs, x + insetX, y + insetY) then
-		return
-	end
-	pcall(function()
-		VirtualInputManager:SendMouseMoveEvent(x, y, game)
-	end)
-end
-
--- Snap camera and cursor onto the current aim target right before each skill.
--- holdTime nil = TRIAL_AIM_HOLD (Sea Beast). Dap binh dung hold ngan hon vi
--- muc tieu dung yen, khong can giu huong lau.
+-- Snap huong nhan vat vao muc tieu truoc khi ban skill
 function aimAtSkillTarget(holdTime)
-	local aimPoint, camera, root = getTrialAimState()
-	if not aimPoint or not camera then
+	local aimPoint, root = getTrialAimState()
+	if not aimPoint or not root then
 		return false
 	end
-	-- Mo cua so hold: RenderStep giu huong nay trong vai frame, du de server
-	-- doc dung look vector khi skill duoc thu. Het hold, camera tu do lai ngay
-	-- nen day khong phai camera lock.
 	trialAimHoldUntil = tick() + math.max(0.03, tonumber(holdTime) or TRIAL_AIM_HOLD)
-	camera.CFrame = safeLookAt(camera.CFrame.Position, aimPoint)
-	if root and (aimPoint - root.Position).Magnitude > 0.5 then
+	if (aimPoint - root.Position).Magnitude > 0.5 then
 		root.CFrame = safeLookAt(root.Position, aimPoint)
-	end
-	local ok, screenPoint, onScreen = pcall(function()
-		return camera:WorldToViewportPoint(aimPoint)
-	end)
-	if ok and screenPoint and onScreen ~= false then
-		moveTrialMouseTo(screenPoint.X, screenPoint.Y)
-	else
-		moveTrialMouseTo(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
 	end
 	return true
 end
@@ -6228,6 +6278,34 @@ end
 local function aimAtTrialSkillTarget()
 	return aimAtSkillTarget(nil)
 end
+
+-- Silent aim qua metamethod hook cho Mouse.Hit / Mouse.Target:
+-- Khi script cua game kiem tra vi tri chuot de phong skill, no tu dong nhan
+-- duoc toa do target ma khong he can di chuyen con tro chuot tren man hinh.
+pcall(function()
+	if typeof(hookmetamethod) == "function" then
+		local oldIndex
+		oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
+			if not checkcaller() and typeof(self) == "Instance" and self:IsA("Mouse") then
+				if key == "Hit" or key == "hit" then
+					local target = getActiveAimPart()
+					if target and typeof(target) == "Instance" and target:IsA("BasePart") and target.Parent then
+						local aimPoint = getTrialAimPoint(target)
+						if aimPoint then
+							return CFrame.new(aimPoint)
+						end
+					end
+				elseif key == "Target" or key == "target" then
+					local target = getActiveAimPart()
+					if target and typeof(target) == "Instance" and target.Parent then
+						return target
+					end
+				end
+			end
+			return oldIndex(self, key)
+		end))
+	end
+end)
 
 -- Skill spam loop: cycle Melee   Sword   Melee li n t c, kh ng ng i ch  cooldown
 -- M i v ng: equip Melee   spam h t skill s n   equip Sword   spam h t skill s n   l p l i
