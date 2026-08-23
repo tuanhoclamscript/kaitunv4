@@ -3594,6 +3594,17 @@ function runTrialCompletionBarrier()
 	if not trialCycleDone then
 		return
 	end
+	local postTrialState = getV4Status(false)
+	if postTrialState and (postTrialState.needsTraining or postTrialState.needsPurchase or postTrialState.complete) then
+		local reason = postTrialState.needsTraining and "post_trial_training"
+			or (postTrialState.needsPurchase and "post_trial_upgrade" or "race_v4_completed")
+		status(postTrialState.detail or postTrialState.label or "Trial cycle finished")
+		resetTrialBarrierState()
+		if isUper and isMyUpgearTurn() then
+			releaseCurrentGroup(reason)
+		end
+		return
+	end
 	local character = Players.LocalPlayer.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -5964,7 +5975,14 @@ task.spawn(function()
 			break
 		end
 		if trialCycleDone then
-			pcall(runTrialCompletionBarrier)
+			local postTrialState = getV4Status(false)
+			if postTrialState and (postTrialState.needsTraining or postTrialState.needsPurchase or postTrialState.complete) then
+				resetTrialBarrierState()
+				matchState.assigned = false
+				pcall(runWaitingAccountWork)
+			else
+				pcall(runTrialCompletionBarrier)
+			end
 			task.wait(0.25)
 			break
 		end
