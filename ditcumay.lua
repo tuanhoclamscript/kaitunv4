@@ -5011,18 +5011,62 @@ function RaidGetCurrentIsland()
 end
 
 -- Bam nut RaidSummon2 de start raid
+local RAID_SUMMON_POS = CFrame.new(-5102.186, 310.564, -2922.053)
+local RAID_SCIENTIST_POS = CFrame.new(-5008.5127, 313.853, -2817.0974)
+
+function RaidFindSummonClickDetector()
+	local candidates = {}
+	local map = Workspace:FindFirstChild("Map")
+	if map then
+		candidates[#candidates + 1] = map:FindFirstChild("Boat Castle")
+	end
+	candidates[#candidates + 1] = Workspace:FindFirstChild("Boat Castle")
+	for _, raidMap in ipairs(candidates) do
+		if raidMap then
+			for _, summonName in ipairs({"RaidSummon2", "MainRaid"}) do
+				local summon = raidMap:FindFirstChild(summonName, true)
+				local button = summon and (summon:FindFirstChild("Button", true) or summon:FindFirstChild("Main", true))
+				local detector = button and button:FindFirstChildOfClass("ClickDetector")
+					or (summon and summon:FindFirstChildWhichIsA("ClickDetector", true))
+				if detector then
+					return detector
+				end
+			end
+			local detector = raidMap:FindFirstChildWhichIsA("ClickDetector", true)
+			if detector then
+				local parentName = string.lower(tostring(detector.Parent and detector.Parent.Name or ""))
+				local ancestorName = string.lower(tostring(detector.Parent and detector.Parent.Parent and detector.Parent.Parent.Name or ""))
+				if parentName:find("main", 1, true) or parentName:find("button", 1, true)
+					or ancestorName:find("raid", 1, true) then
+					return detector
+				end
+			end
+		end
+	end
+	return nil
+end
+
 function RaidStartSummon()
-	-- Xac dinh sea tu vi tri: Boat Castle (sea 2) tai x ~ -5100, z ~ -2900
-	local raidMapName = "Boat Castle"
-	local raidMap = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild(raidMapName)
-		or Workspace:FindFirstChild(raidMapName)
-	if not raidMap then return false end
-	local summon = raidMap:FindFirstChild("RaidSummon2")
-	local button = summon and summon:FindFirstChild("Button")
-	local mainButton = button and button:FindFirstChild("Main")
-	local clickDetector = mainButton and mainButton:FindFirstChildOfClass("ClickDetector")
-	if not clickDetector then return false end
+	-- Mua chip bang remote xong phai den gan raid button de object stream vao client.
+	-- Neu check tu xa thi Boat Castle/RaidSummon2 thuong nil -> spam "not found".
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not root or (root.Position - RAID_SUMMON_POS.Position).Magnitude > 180 then
+		status("Moving to raid summon")
+		module:topos(RAID_SUMMON_POS + Vector3.new(0, 8, 0), 220, 0, true, true)
+		task.wait(1)
+	end
+	local clickDetector
+	local deadline = tick() + 8
+	repeat
+		clickDetector = RaidFindSummonClickDetector()
+		if clickDetector then break end
+		task.wait(0.25)
+	until tick() >= deadline
+	if not clickDetector then
+		return false
+	end
 	EquipTool("Special Microchip")
+	task.wait(0.2)
 	fireclickdetector(clickDetector)
 	return true
 end
