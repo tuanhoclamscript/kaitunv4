@@ -1,0 +1,6319 @@
+print("[v4] script start")
+getgenv().Config = {
+	["Team"] = "Marines",
+	["Farm Fragments"] = {
+		autoraid = true,
+		autotyrant = true
+	},
+	["Gear"] = "A-B-B",
+	["ChangeBestGear"] = true,
+	["V3 Door Distance"] = 50,
+	["V3 Countdown"] = 6,
+	["V3 Ready Hold Time"] = 0.6,
+	["V3 Require Different Races"] = true,
+	["V3 Fire Count"] = 1,
+	["V3 Fire Interval"] = 0.05,
+	["V3 WebSocket Sync"] = true,
+	["Reset Teleport After Trial"] = true,
+	["Reset Teleport Settle Time"] = 0.45,
+	["Pair Temple Timeout"] = 35,
+	["Pair Sticky Until Trial Complete"] = true,
+	["Pair Release After Trial"] = true,
+	["Pair Requeue Delay"] = 15,
+	["Pair Force Temple Interval"] = 0.8,
+	["Trial Barrier Timeout"] = 240,
+	["Fish Trial Stand Height"] = 25,
+	["Fish Trial Stand Offset"] = 35,
+	["Full Moon API URL"] = "https://vortexz-hub.xyz/fullmoon",
+	["Full Moon Poll Interval"] = 15,
+	["Full Moon Cycle Seconds"] = 600,
+	["Full Moon Minimum Remaining"] = 120,
+	["Full Moon Max Players"] = 8,
+	["Central Hub WebSocket"] = "ws://13.75.105.170/?token=ditnhaukhong",
+	["Central Hub Heartbeat Interval"] = 3,
+	["Local Tool Enabled"] = false,
+	["Local Tool WebSocket"] = "ws://127.0.0.1:20425/client",
+	["Local Tool Heartbeat Interval"] = 1,
+	["Training Islands"] = {
+		--"Tiki Outpost",
+		"Ice Cream Island",
+		--"Haunted Castle",
+		--"Great Tree",
+		--"Port Town",
+		--"Peanut Island"
+	}
+}
+
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local TeleportService = game:GetService("TeleportService")
+local CoreGui = game:GetService("CoreGui")
+local CollectionService = game:GetService("CollectionService")
+
+local function safeFiresignal(signal)
+	if not signal then return end
+	if typeof(firesignal) == "function" then
+		pcall(firesignal, signal)
+		return
+	end
+	if typeof(getconnections) == "function" then
+		for _, conn in ipairs(getconnections(signal) or {}) do
+			if conn.Function then
+				pcall(conn.Function)
+			elseif conn.Fire then
+				pcall(conn.Fire, conn)
+			end
+		end
+	end
+end
+
+local function safeGetGuiParent()
+	local parent = nil
+	pcall(function()
+		parent = gethui and gethui()
+	end)
+	if not parent then
+		pcall(function()
+			parent = CoreGui
+		end)
+	end
+	if not parent then
+		pcall(function()
+			parent = Player and Player:FindFirstChild("PlayerGui")
+		end)
+	end
+	return parent
+end
+
+if not game:IsLoaded() then
+	pcall(function()
+		game.Loaded:Wait()
+	end)
+end
+
+pcall(function()
+	local mapStash = ReplicatedStorage:WaitForChild("MapStash", 5)
+	local temple = mapStash and mapStash:WaitForChild("Temple of Time", 5)
+	local map = workspace:WaitForChild("Map", 5)
+	if temple and map then
+		temple.Parent = map
+	end
+end)
+
+local Player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local LocalPlayer = Player
+
+local Modules = ReplicatedStorage:WaitForChild("Modules", 10)
+local Net = Modules and Modules:WaitForChild("Net", 10)
+local RegisterAttack = Net and Net:WaitForChild("RE/RegisterAttack", 10)
+local RegisterHit = Net and Net:WaitForChild("RE/RegisterHit", 10)
+local ShootGunEvent = Net and Net:WaitForChild("RE/ShootGunEvent", 10)
+local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
+local GunValidator = Remotes and Remotes:WaitForChild("Validator2", 10)
+local CommF_ = Remotes and Remotes:WaitForChild("CommF_", 10)
+print("[v4] remotes resolved CommF_=" .. tostring(CommF_ ~= nil))
+
+local function getCurrentJobId()
+	return tostring(game.JobId or "")
+end
+
+local function readJobId(value, fallback)
+	if type(value) == "table" then
+		value = value.JobId or value.JobID or value.jobId or value.jobID
+			or value.job_id or value.jobid or value.id or value.Id
+	end
+	value = tostring(value or fallback or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	return value ~= "" and value or nil
+end
+
+local function readPlaceId(value, fallback)
+	if type(value) == "table" then
+		value = value.PlaceId or value.PlaceID or value.placeId or value.placeID
+			or value.place_id or value.placeid
+	end
+	local placeId = tonumber(value or fallback)
+	return placeId and placeId > 0 and placeId or nil
+end
+
+local cfg = getgenv().Config or {}
+local team = cfg["Team"] or getgenv().Team or "Marines"
+team = tostring(team)
+if team == "Pirate" then
+	team = "Pirates"
+end
+if team ~= "Marines" and team ~= "Pirates" then
+	team = "Marines"
+end
+
+task.spawn(function()
+	local deadline = tick() + 10
+	while (not Player.Team or Player.Team.Name ~= team) and tick() < deadline do
+		pcall(function()
+			if CommF_ then
+				CommF_:InvokeServer("SetTeam", team)
+			end
+		end)
+		task.wait(1)
+	end
+end)
+
+pcall(function()
+	if workspace:GetAttribute("MAP") and workspace:GetAttribute("MAP") ~= "Sea3" and CommF_ then
+		CommF_:InvokeServer("TravelZou")
+	end
+end)
+
+getgenv().TyrantConfig = getgenv().TyrantConfig or {
+	Team = "Marines",
+	Weapon = "Dragon Talon",
+	AutoBuyDragonTalon = true,
+	AutoBuso = true,
+	TweenSpeed = 200,
+	FarmHeight = 18,
+	BossHeight = 25,
+	AttackDistance = 105,
+	AttackDelay = 0.03,
+	BringMobs = true,
+	VaseSweepInterval = 120,
+	VaseSweepDuration = 60
+}
+
+if not getgenv().Config then
+	getgenv().Config = {
+		["Team"] = "Marines",
+		["ChangeBestGear"] = true,
+		["Gear"] = "A-B-B",
+		["Farm Fragments"] = {
+			autoraid = false,
+			autotyrant = true
+		},
+		["V3 Door Distance"] = 50,
+		["V3 Countdown"] = 6,
+		["V3 Ready Hold Time"] = 0.6,
+		["V3 WebSocket Sync"] = true,
+		["V3 Require Different Races"] = true,
+		["V3 Fire Count"] = 1,
+		["V3 Fire Interval"] = 0.05,
+		["Pair Temple Timeout"] = 35,
+		["Pair Sticky Until Trial Complete"] = true,
+		["Pair Release After Trial"] = true,
+		["Pair Requeue Delay"] = 15,
+		["Pair Force Temple Interval"] = 0.8,
+		["Training Islands"] = {
+			--"Tiki Outpost",
+			"Ice Cream Island",
+			--"Haunted Castle",
+			--"Great Tree",
+			--"Port Town",
+			--"Peanut Island"
+		}
+	}
+end
+
+local bestGearForRace = {
+	Ghoul = "B-B-A",
+	Cyborg = "A-B-B",
+	Mink = "B-B-A",
+	Skypiea = "B-B-A",
+	Human = "B-A-A",
+	Fishman = "B-A-A"
+}
+
+if not getgenv().Config["Gear"] or #getgenv().Config["Gear"] ~= 5 then
+	getgenv().Config["Gear"] = getgenv().Config["Gear"] or "A-B-B"
+end
+
+local isUper = false
+local isAlly = false
+local mainAccountName = ""
+local isMain = false
+local isallies = {}
+
+local HelpWhitelist = {}
+do
+	local rawHelpList = [[
+       AntonioMoses4
+	   BarryHaas945
+	   JodyAli0566
+    ]]
+	for name in rawHelpList:gmatch("[^\r\n]+") do
+		name = name:gsub("^%s+", ""):gsub("%s+$", "")
+		if name ~= "" then
+			HelpWhitelist[name] = true
+		end
+	end
+end
+
+getgenv().UpdateRoles = function()
+	if HelpWhitelist[Player.Name] ~= true then
+		-- Every account not explicitly listed as Helper is a Main.
+		isUper = true;
+		isAlly = false;
+		mainAccountName = Player.Name
+	else
+		isUper = false;
+		isAlly = true;
+		mainAccountName = ""
+	end
+
+	-- Hub assignment overrides the legacy Helper list for this trial group.
+	-- The configured role sent in heartbeats remains main/helper as declared.
+	local hubAssignment = getgenv().__KAITUN_HUB_ASSIGNMENT
+	local assignmentActive = type(hubAssignment) == "table"
+		and type(hubAssignment.members) == "table"
+		and tick() - (tonumber(hubAssignment.receivedAt) or 0) < 900
+	local assignedToGroup = false
+	if assignmentActive then
+		for _, memberName in ipairs(hubAssignment.members) do
+			if memberName == Player.Name then
+				assignedToGroup = true
+				break
+			end
+		end
+	end
+	if assignedToGroup then
+		mainAccountName = tostring(hubAssignment.leader or "")
+		isUper = Player.Name == mainAccountName
+		isAlly = not isUper
+	end
+	isMain = isUper
+
+    -- C p nh t danh s ch  ng minh
+	isallies = {}
+	if assignedToGroup then
+		for _, memberName in ipairs(hubAssignment.members) do
+			if memberName ~= Player.Name then
+				isallies[memberName] = true
+			end
+		end
+	elseif isUper then
+		for _, p in ipairs(Players:GetPlayers()) do
+            -- CH  thu n p nh ng acc C  T N trong danh s ch HelpAccount l m  .
+            -- B  qua ho n to n c c acc Main kh c.
+			if p.Name ~= Player.Name and HelpWhitelist[p.Name] then
+				isallies[p.Name] = true
+			end
+		end
+	elseif isAlly then
+		if mainAccountName ~= "" then
+			isallies[mainAccountName] = true
+		end
+	end
+end
+
+-- Ch y l n  u ti n
+getgenv().UpdateRoles()
+
+getgenv().Config["Team"] = getgenv().Config["Team"]
+    and (getgenv().Config["Team"] == "Marines" or getgenv().Config["Team"] == "Pirates")
+    and getgenv().Config["Team"] or "Marines"
+
+function thuaaa()
+	if Player.Team then
+		return
+	end
+	pcall(function()
+		local targetTeam = (getgenv().Team == "Pirates" or (getgenv().Config and getgenv().Config["Team"] == "Pirates")) and "Pirates" or "Marines"
+		if CommF_ then
+			CommF_:InvokeServer("SetTeam", targetTeam)
+		end
+	end)
+end
+
+thuaaa()
+
+task.spawn(function()
+	while task.wait() do
+		local char = Player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			local bv = hrp:FindFirstChild("BodyClip")
+			if not bv then
+				bv = Instance.new("BodyVelocity")
+				bv.Name = "BodyClip"
+				bv.Parent = hrp
+				bv.MaxForce = Vector3.new(100000, 100000, 100000)
+			end
+			bv.Velocity = Vector3.new(0, 0, 0)
+		end
+	end
+end)
+
+pcall(function()
+	local pgui = Player:FindFirstChild("PlayerGui")
+	local L_207_ = pgui and pgui:FindFirstChild("ChooseTeam", true)
+	local L_208_ = pgui and pgui:FindFirstChild("UIController", true)
+	if L_207_ and L_207_.Visible and typeof(getgc) == "function" and typeof(getconstants) == "function" and typeof(getfenv) == "function" then
+		for _, f in pairs(getgc(true)) do
+			if type(f) == "function" and getfenv(f).script == L_208_ then
+				local c = getconstants(f)
+				pcall(function()
+					if (c[1] == "Pirates" or c[1] == "Marines") and #c == 1 then
+						f(getgenv().Team or "Marines")
+					end
+				end)
+			end
+		end
+	end
+
+	if pgui then
+		for _, v in pairs(pgui:GetChildren()) do
+			if v:FindFirstChild("ChooseTeam") and v.ChooseTeam:FindFirstChild("Container") then
+				local targetTeam = getgenv().Config and getgenv().Config["Team"] or "Marines"
+				local frame = v.ChooseTeam.Container:FindFirstChild(targetTeam)
+				local thua = frame and frame:FindFirstChild("Frame") and frame.Frame:FindFirstChild("TextButton")
+				if thua then
+					safeFiresignal(thua.Activated)
+				end
+			end
+		end
+	end
+end)
+
+local module = {}
+
+pcall(function()
+	local pgui = Player:FindFirstChild("PlayerGui")
+	if pgui and pgui:FindFirstChild("LoadingScreen") then
+		local startCheck = tick()
+		repeat
+			task.wait(0.2)
+		until not pgui:FindFirstChild("LoadingScreen") or tick() - startCheck > 6
+	end
+end)
+
+local player = Player
+local char = player.Character
+local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+function module:eq()
+	local backpack = player:FindFirstChild("Backpack")
+	if not backpack then
+		return
+	end
+	local character = player.Character
+	if not character or not character:FindFirstChild("Humanoid") then
+		return
+	end
+	for _, L in pairs(backpack:GetChildren()) do
+		if L:IsA("Tool") and L["ToolTip"] == "Melee" and not _G.USESWORD then
+			local a = pcall(function()
+				character.Humanoid:EquipTool(L)
+			end)
+			if a then
+				break
+			end
+		elseif L:IsA("Tool") and L["ToolTip"] == "Sword" and _G.USESWORD then
+			local a = pcall(function()
+				character.Humanoid:EquipTool(L)
+			end)
+			if a then
+				break
+			end
+		end
+	end
+end
+
+local lastHakiRequestAt = -math.huge
+function module:haki()
+	local character = player.Character
+	if character and not character:FindFirstChild("HasBuso") and tick() - lastHakiRequestAt >= 2 then
+		lastHakiRequestAt = tick()
+		CommF_:InvokeServer("Buso")
+	end
+end
+
+local smoothTweenId = 0
+local smoothTweenRunning = false
+local smoothTweenTarget = nil
+local smoothTweenSpeed = 200
+local tweenNoclipConnection = nil
+local tweenCollisionStates = {}
+local extractOrbitAngle = 30
+local extractOrbitLastChange = tick()
+
+local function setTweenNoclip(enabled)
+	if enabled then
+		if tweenNoclipConnection then
+			return
+		end
+		tweenNoclipConnection = RunService.Stepped:Connect(function()
+			local character = player.Character
+			if not character then
+				return
+			end
+			for _, part in ipairs(character:GetDescendants()) do
+				if part:IsA("BasePart") then
+					if tweenCollisionStates[part] == nil then
+						tweenCollisionStates[part] = part.CanCollide
+					end
+					part.CanCollide = false
+				end
+			end
+		end)
+		return
+	end
+
+	if tweenNoclipConnection then
+		tweenNoclipConnection:Disconnect()
+		tweenNoclipConnection = nil
+	end
+	for part, originalCanCollide in pairs(tweenCollisionStates) do
+		if part.Parent then
+			part.CanCollide = originalCanCollide
+		end
+	end
+	table.clear(tweenCollisionStates)
+end
+
+-- CFrame.lookAt is undefined when the direction is parallel to the up vector.
+-- The Sea Beast trial hovered exactly above its target, so the lock produced a
+-- NaN CFrame and the skills fired at nothing.
+function safeLookAt(position, target)
+	local direction = target - position
+	if direction.Magnitude < 0.05 then
+		return CFrame.new(position)
+	end
+	local up = Vector3.new(0, 1, 0)
+	if math.abs(direction.Unit.Y) > 0.999 then
+		up = Vector3.new(0, 0, -1)
+	end
+	return CFrame.lookAt(position, target, up)
+end
+
+-- The tween writes the root CFrame every Heartbeat, after the aim RenderStep,
+-- so a plain CFrame.new(position) erased the rotation skills are fired along.
+function trialAimLookCFrame(position)
+	local target = _G.SHOULDSPAMSKILLS and _G.TRIAL_SKILL_TARGET
+	if typeof(target) == "Instance" and target:IsA("BasePart") and target.Parent then
+		return safeLookAt(position, target.Position)
+	end
+	return CFrame.new(position)
+end
+
+local function normalizeTweenTarget(target)
+	if typeof(target) == "CFrame" then
+		return target
+	end
+	if typeof(target) == "Vector3" then
+		return CFrame.new(target)
+	end
+	if typeof(target) == "Instance" then
+		if target:IsA("BasePart") then
+			return target.CFrame
+		end
+		if target:IsA("Model") then
+			return target:GetPivot()
+		end
+	end
+	return nil
+end
+
+-- Extract keeps the player moving around the target instead of hovering at one
+-- fixed point. The angle advances in 80 degree steps every 0.4 seconds.
+local function getExtractOrbitTarget(target, height)
+		local targetCFrame = normalizeTweenTarget(target)
+		if not targetCFrame then
+			return nil
+		end
+		local now = tick()
+		if now - extractOrbitLastChange > 0.4 then
+			extractOrbitAngle = extractOrbitAngle + 80
+			extractOrbitLastChange = now
+			if extractOrbitAngle > 50000 then
+				extractOrbitAngle = 60
+			end
+		end
+		local radians = math.rad(extractOrbitAngle)
+		local orbitPosition = targetCFrame.Position
+			+ Vector3.new(math.cos(radians) * 40, 0, math.sin(radians) * 40)
+		local position = Vector3.new(
+			math.floor(orbitPosition.X / 10) * 10,
+			math.floor(orbitPosition.Y / 10) * 10 + (tonumber(height) or 35),
+			math.floor(orbitPosition.Z / 10) * 10
+		)
+		return CFrame.new(position, targetCFrame.Position)
+end
+
+function module:stopTween()
+	smoothTweenId = smoothTweenId + 1
+	smoothTweenRunning = false
+	smoothTweenTarget = nil
+	setTweenNoclip(false)
+end
+
+function module:topos(target, speed, heightOffset, useNoclip, keepNoclip)
+	local targetCFrame = normalizeTweenTarget(target)
+	if not targetCFrame then
+		return false
+	end
+	speed = tonumber(speed) or smoothTweenSpeed
+	heightOffset = tonumber(heightOffset) or 0
+	useNoclip = useNoclip == nil and true or useNoclip
+	keepNoclip = keepNoclip == true
+	if speed <= 0 then
+		return false
+	end
+
+	local character = player.Character or player.CharacterAdded:Wait()
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not root then
+		return false
+	end
+	if humanoid then
+		humanoid.Sit = false
+	end
+
+	local destination = targetCFrame.Position + Vector3.new(0, heightOffset, 0)
+	if smoothTweenRunning and smoothTweenTarget
+		and (smoothTweenTarget.Position - destination).Magnitude < 1
+	then
+		return true
+	end
+	if smoothTweenRunning then
+		self:stopTween()
+	end
+
+	local startPosition = root.Position
+	local distance = (destination - startPosition).Magnitude
+	if distance <= 0.05 then
+		root.CFrame = trialAimLookCFrame(destination)
+		if not keepNoclip then
+			self:stopTween()
+		else
+			smoothTweenRunning = false
+			smoothTweenTarget = nil
+		end
+		return true
+	end
+
+	smoothTweenId = smoothTweenId + 1
+	local currentTweenId = smoothTweenId
+	smoothTweenTarget = CFrame.new(destination)
+	smoothTweenRunning = true
+	setTweenNoclip(useNoclip)
+
+	local duration = distance / speed
+	local startedAt = tick()
+	local reachedTarget = false
+	while currentTweenId == smoothTweenId do
+		if _G.Stop then
+			break
+		end
+		character = player.Character
+		local currentRoot = character and character:FindFirstChild("HumanoidRootPart")
+		if currentRoot ~= root then
+			break
+		end
+		local progress = math.min((tick() - startedAt) / duration, 1)
+		root.CFrame = trialAimLookCFrame(startPosition:Lerp(destination, progress))
+		if progress >= 1 then
+			reachedTarget = true
+			break
+		end
+		RunService.Heartbeat:Wait()
+	end
+
+	if currentTweenId == smoothTweenId then
+		smoothTweenRunning = false
+		smoothTweenTarget = nil
+		if not keepNoclip then
+			setTweenNoclip(false)
+		end
+	end
+	return reachedTarget
+end
+
+function module:join(v2)
+	v2 = v2 and (v2 == "Marines" or v2 == "Pirates") and v2 or "Marines"
+	pcall(function()
+		local pgui = player:FindFirstChild("PlayerGui")
+		if not pgui then return end
+		for i, v in pairs(pgui:GetChildren()) do
+			if v:FindFirstChild("ChooseTeam") and v.ChooseTeam:FindFirstChild("Container") then
+				local container = v.ChooseTeam.Container:FindFirstChild(v2)
+				local thua = container and container:FindFirstChild("Frame") and container.Frame:FindFirstChild("TextButton")
+				if thua then
+					safeFiresignal(thua.Activated)
+				end
+			end
+		end
+	end)
+end
+
+function module:tele(v)
+	pcall(function()
+		local serverBrowser = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+		if serverBrowser then
+			serverBrowser:InvokeServer("teleport", v or game.JobId)
+		else
+			TeleportService:TeleportToPlaceInstance(game.PlaceId, v or game.JobId, Player)
+		end
+	end)
+end
+
+function module:noclip(v)
+	task.spawn(function()
+		while task.wait(0.1) do
+			local char = player.Character
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			local shouldNoclip = false
+			if type(v) == "function" then
+				pcall(function() shouldNoclip = v() == true end)
+			elseif type(v) == "string" then
+				pcall(function() shouldNoclip = loadstring(v)() == true end)
+			elseif v == true then
+				shouldNoclip = true
+			end
+			if shouldNoclip and hum and not hum.Sit and root then
+				if not root:FindFirstChild("BodyClip") then
+					local L_348_ = Instance.new("BodyVelocity")
+					L_348_.Name = "BodyClip"
+					L_348_.Parent = root
+					L_348_.MaxForce = Vector3.new(100000, 100000, 100000)
+					L_348_.Velocity = Vector3.new(0, 0, 0)
+				end
+				for _, d in pairs(char:GetDescendants()) do
+					if d:IsA("BasePart") then
+						d.CanCollide = false
+					end
+				end
+			else
+				pcall(function()
+					if root and root:FindFirstChild("BodyClip") then
+						root.BodyClip:Destroy()
+					end
+				end)
+			end
+		end
+	end)
+end
+
+function module:getdis(x, y)
+	if not x then return math.huge end
+	local xPos = typeof(x) == "CFrame" and x.Position or (typeof(x) == "Vector3" and x or (x:IsA("BasePart") and x.Position or Vector3.zero))
+	if not y then
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then return math.huge end
+		return (xPos - hrp.Position).Magnitude
+	end
+	local yPos = typeof(y) == "CFrame" and y.Position or (typeof(y) == "Vector3" and y or (y:IsA("BasePart") and y.Position or Vector3.zero))
+	return (xPos - yPos).Magnitude
+end
+
+player.Idled:Connect(function()
+	pcall(function()
+		game:GetService("VirtualUser"):Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+		task.wait(1)
+		game:GetService("VirtualUser"):Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+	end)
+end)
+
+local topofgreattree = CFrame.new(3035.15137, 2281.15918, -7325.19189)
+
+function getdoor(vv)
+	if not vv then
+		vv = getLocalRaceName()
+	end
+	local corridorRaceAliases = { Rabbit = "Mink", Shark = "Fishman", Angel = "Skypiea" }
+	vv = corridorRaceAliases[tostring(vv)] or tostring(vv)
+	local temple = workspace.Map:FindFirstChild("Temple of Time")
+	if not temple then
+		return nil
+	end
+	local corridor = temple:FindFirstChild(vv .. "Corridor")
+	if not corridor then
+		return nil
+	end
+	local door = corridor:FindFirstChild("Door")
+	if not door then
+		return nil
+	end
+	return door:FindFirstChild("Entrance")
+end
+
+function getdis(...)
+	return module:getdis(...)
+end
+
+local topos = function(v)
+	pcall(function()
+		if getdis(v) > 2500 and getdis(CFrame.new(28310.0234, 14895.1123, 109.456741)) < 1500 then
+		end
+	end)
+	return module:topos(v)
+end
+
+local pos_plr_trial = {
+	CFrame.new(28692.3477, 14887.5605, -53.7669983),
+	CFrame.new(28782.7246, 14898.9902, -59.6069946),
+	CFrame.new(28700.875, 14888.2598, -154.110992),
+	CFrame.new(28795.7715, 14888.2598, -112.917999),
+	CFrame.new(28658.4551, 14888.2598, -121.372009),
+	CFrame.new(28742.4688, 14887.5596, -18.2120056)
+}
+
+function isplrshouldkill(plr)
+	if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+        and plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health > 0 then
+		for i, v in pairs(pos_plr_trial) do
+			if getdis(plr.Character.HumanoidRootPart.CFrame, v) < 5 then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local race_abilities = {
+	["Human"] = "Last Resort",
+	["Mink"] = "Agility",
+	["Fishman"] = "Water Body",
+	["Skypiea"] = "Heavenly Blood",
+	["Ghoul"] = "Heightened Senses",
+	["Cyborg"] = "Energy Core"
+}
+
+local race_name_aliases = {
+	Rabbit = "Mink",
+	Shark = "Fishman",
+	Angel = "Skypiea"
+}
+
+function canonicalRaceName(race)
+	race = tostring(race or "")
+	return race_name_aliases[race] or race
+end
+
+local trial_location_names = {
+	Human = "Trial of Strength",
+	Mink = "Trial of Speed",
+	Fishman = "Trial of Water",
+	Skypiea = "Trial of the King",
+	Ghoul = "Trial of Carnage",
+	Cyborg = "Trial of the Machine"
+}
+
+local races_trial_place = setmetatable({}, {
+	__index = function(_, key)
+		local race = canonicalRaceName(key)
+		local locName = trial_location_names[race]
+		if not locName then return nil end
+		local worldOrigin = workspace:FindFirstChild("_WorldOrigin")
+		local locations = worldOrigin and worldOrigin:FindFirstChild("Locations")
+		return locations and locations:FindFirstChild(locName)
+	end
+})
+
+function getOwnTrialLocation()
+	local race = canonicalRaceName(getLocalRaceName())
+	return race, races_trial_place[race]
+end
+
+_G.playersinserver = {}
+function updateplayers()
+	if not _G.playersinserver then
+		_G.playersinserver = {}
+	end
+	local players = {}
+	for i, v in pairs(game.Players:GetChildren()) do
+		pcall(function()
+			local data = v:FindFirstChild("Data")
+			local raceObj = data and data:FindFirstChild("Race")
+			local raceVal = raceObj and raceObj.Value
+			if raceVal then
+				local doorEntrance = nil
+				pcall(function()
+					local map = workspace:FindFirstChild("Map")
+					local temple = map and map:FindFirstChild("Temple of Time")
+					local corridor = temple and temple:FindFirstChild(raceVal .. "Corridor")
+					local door = corridor and corridor:FindFirstChild("Door")
+					doorEntrance = door and door:FindFirstChild("Entrance")
+				end)
+				players[v] = {
+					["Race"] = raceVal,
+					["Door"] = doorEntrance
+				}
+			end
+		end)
+	end
+	_G.playersinserver = players
+end
+
+function isshouldturnonability()
+	local count = 0
+	for i, v in pairs(workspace.Characters:GetChildren()) do
+		if v.Name ~= player.Name and v:FindFirstChild("HumanoidRootPart") then
+			local theirrace = game.Players:FindFirstChild(v.Name).Data.Race.Value
+			local corridor = workspace.Map["Temple of Time"]:FindFirstChild(theirrace .. "Corridor")
+			local race_door = corridor and corridor:FindFirstChild("Door")
+			race_door = race_door and race_door:FindFirstChild("Entrance")
+			local abilityName = race_abilities[canonicalRaceName(theirrace)]
+			if race_door and abilityName and getdis(race_door.CFrame, v.HumanoidRootPart.CFrame) < 10 then
+				if v.HumanoidRootPart:FindFirstChild(abilityName) then
+					count = count + 1
+				end
+			end
+		end
+	end
+	return count >= 2
+end
+
+local v4Started = false
+function talktoonggianaodo()
+	if v4Started then
+		return
+	end
+	v4Started = true
+	local ok, thua = pcall(function()
+		return CommF_:InvokeServer("RaceV4Progress", "Check")
+	end)
+	if not ok then
+		v4Started = false
+		return
+	end
+	if thua == 1 then
+		pcall(function()
+			CommF_:InvokeServer("RaceV4Progress", "Check")
+		end)
+		pcall(function()
+			CommF_:InvokeServer("RaceV4Progress", "Begin")
+		end)
+	elseif thua == 2 then
+		local startAt = tick()
+		repeat
+			task.wait(0.5)
+			pcall(function()
+				CommF_:InvokeServer("RaceV4Progress", "Teleport")
+			end)
+			pcall(function()
+				topos(CFrame.new(3028, 2281, -7325))
+			end)
+		until module:getdis(CFrame.new(28286.35546875, 14896.5078125, 102.62469482422)) <= 15 or tick() - startAt > 30
+	else
+		pcall(function()
+			CommF_:InvokeServer("RaceV4Progress", "Check")
+		end)
+		task.wait(1)
+		pcall(function()
+			CommF_:InvokeServer("RaceV4Progress", "Continue")
+		end)
+	end
+	v4Started = false
+end
+
+function getBlueGear()
+	if not game.workspace.Map:FindFirstChild("MysticIsland") then
+		return nil
+	end
+	for o, c in pairs(game.workspace.Map.MysticIsland:GetChildren()) do
+		if c:IsA("MeshPart") and c.MeshId == "rbxassetid://10153114969" then
+			return c
+		end
+	end
+end
+
+function isnight()
+	local c = game.Lighting.ClockTime
+	return c >= 18 or c < 5
+end
+
+function isfullmoon()
+	return game:GetService("Lighting"):GetAttribute("MoonPhase") == 5
+end
+
+function getmob1(pos)
+	local allmobs = {}
+	for i, v in pairs(workspace.Enemies:GetChildren()) do
+		if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Humanoid")
+            and v.Humanoid.Health > 0 and getdis(v.HumanoidRootPart.CFrame, pos) < 1000 then
+			table.insert(allmobs, v)
+		end
+	end
+	return allmobs
+end
+
+function checkmob_(v)
+	return v and v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0
+end
+
+function noideaforname(v)
+	if isallies[v.Name] then
+		return false
+	end
+	return true
+end
+
+function getplayers(all)
+	local plrs = {}
+	for i, v in pairs(game.Players:GetPlayers()) do
+		if v ~= player and v.Character then
+			if all then
+				if v.Character:FindFirstChild("Humanoid") and v.Character:FindFirstChild("HumanoidRootPart") and v.Character.Humanoid.Health > 0 then
+					for _, pos in pairs(pos_plr_trial) do
+						if getdis(v.Character.HumanoidRootPart.CFrame, pos) < 10 then
+							plrs[v.Character] = true
+						end
+					end
+				end
+			else
+				if v ~= game.Players:FindFirstChild(mainAccountName) and noideaforname(v) then
+					if v.Character:FindFirstChild("Humanoid") and v.Character:FindFirstChild("HumanoidRootPart") and v.Character.Humanoid.Health > 0 then
+						for _, pos in pairs(pos_plr_trial) do
+							if getdis(v.Character.HumanoidRootPart.CFrame, pos) < 10 then
+								plrs[v.Character] = true
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return plrs
+end
+
+function checkbackpack(v)
+	local backpack = player:FindFirstChildOfClass("Backpack")
+	local character = player.Character
+	return (backpack and backpack:FindFirstChild(v)) or (character and character:FindFirstChild(v))
+end
+
+local V4StatusCache = {
+	at = 0,
+	data = nil
+}
+local V4_STATUS_CACHE_TIME = 5  -- Tăng từ 3→5s: giảm tần suất gọi blocking RemoteFunction
+
+function getLocalRaceName()
+	local race = "Unknown"
+	pcall(function()
+		race = tostring(Players.LocalPlayer.Data.Race.Value)
+	end)
+	return race
+end
+
+function invokeUpgradeRace(action)
+	return CommF_:InvokeServer("UpgradeRace", action, 1)
+end
+
+function invalidateV4Status()
+	V4StatusCache.at = 0
+	V4StatusCache.data = nil
+end
+
+function readRaceV4Progress()
+	local ok, progress = pcall(function()
+		return CommF_:InvokeServer("RaceV4Progress", "Check")
+	end)
+	if ok then
+		return tonumber(progress)
+	end
+	return nil
+end
+
+function getV4Status(forceRefresh)
+	if not forceRefresh and V4StatusCache.data and tick() - V4StatusCache.at < V4_STATUS_CACHE_TIME then
+		return V4StatusCache.data
+	end
+	local state = {
+		key = "unknown",
+		label = "UNKNOWN",
+		detail = "Unable to read Race V4 status",
+		code = nil,
+		progress = nil,
+		cost = 0,
+		canTrial = false,
+		needsTraining = false,
+		needsPurchase = false,
+		needsGearClaim = false,
+		complete = false,
+		remainingTraining = nil,
+		completedTraining = nil,
+		gear = nil,
+		race = getLocalRaceName(),
+		energy = 0,
+		transformed = false
+	}
+	local character = Players.LocalPlayer.Character
+	if not character then
+		state.key = "waiting_character"
+		state.label = "WAITING CHARACTER"
+		state.detail = "Waiting for character to load"
+		V4StatusCache.at = tick()
+		V4StatusCache.data = state
+		return state
+	end
+	local raceEnergy = character:FindFirstChild("RaceEnergy")
+	local raceTransformed = character:FindFirstChild("RaceTransformed")
+	if raceEnergy then
+		state.energy = tonumber(raceEnergy.Value) or 0
+	end
+	if raceTransformed then
+		state.transformed = raceTransformed.Value == true
+	end
+	if not raceTransformed then
+		local progress = readRaceV4Progress()
+		local abilityName = race_abilities[canonicalRaceName(state.race)]
+		local hasV3Ability = abilityName and checkbackpack(abilityName) ~= nil
+		state.progress = progress
+		if progress == nil then
+			state.key = "check_failed"
+			state.label = "V4 CHECK FAILED"
+			state.detail = "RaceV4Progress Check returned no valid status"
+		elseif hasV3Ability and progress >= 4 then
+			state.key = "first_trial_ready"
+			state.label = "FIRST TRIAL READY"
+			state.detail = "V3 is ready; waiting for Full Moon trial"
+			state.canTrial = true
+		elseif progress == 0 then
+			state.key = "v4_quest_not_started"
+			state.label = "V4 QUEST NOT STARTED"
+			state.detail = "Defeat rip_indra and begin the Race V4 quest"
+		elseif progress == 1 then
+			state.key = "v4_quest_begin"
+			state.label = "BEGIN V4 QUEST"
+			state.detail = "Talk to Sealed King to begin the Great Tree step"
+		elseif progress == 2 then
+			state.key = "go_great_tree"
+			state.label = "GO TO GREAT TREE"
+			state.detail = "Use the Great Tree entrance to reach Temple of Time"
+		elseif progress == 3 then
+			state.key = "continue_v4_quest"
+			state.label = "CONTINUE V4 QUEST"
+			state.detail = "Return to Sealed King and continue the quest"
+		elseif progress == 4 or progress == 5 then
+			state.key = "first_trial_preparation"
+			state.label = "FIRST TRIAL PREPARATION"
+			state.detail = hasV3Ability and "V3 detected; preparing first trial" or "V3 ability was not detected"
+			state.canTrial = hasV3Ability
+		else
+			state.key = "starting_v4"
+			state.label = "STARTING V4 PROCESS"
+			state.detail = "Completing the Race V4 prerequisite steps"
+		end
+		if isAlly then
+			state.complete = false
+			state.canTrial = true
+			state.needsPurchase = false
+			state.needsTraining = false
+			state.key = "trial_ready"
+			state.label = "READY FOR TRIAL"
+			state.detail = "Helper is ready to support"
+		end
+		V4StatusCache.at = tick()
+		V4StatusCache.data = state
+		return state
+	end
+	local ok, code, progress, cost = pcall(function()
+		return invokeUpgradeRace("Check")
+	end)
+	if not ok then
+		state.key = "check_failed"
+		state.label = "V4 CHECK FAILED"
+		state.detail = "UpgradeRace Check remote failed"
+		V4StatusCache.at = tick()
+		V4StatusCache.data = state
+		return state
+	end
+	code = tonumber(code)
+	progress = tonumber(progress)
+	cost = tonumber(cost) or 0
+	state.code = code
+	state.progress = progress
+	state.cost = cost
+	if code == 0 then
+		state.key = "trial_ready"
+		state.label = "READY FOR TRIAL"
+		state.detail = "Training requirement completed"
+		state.canTrial = true
+		state.gear = progress
+	elseif code == 1 then
+		state.key = "training_stage_1"
+		state.label = "TRAINING REQUIRED"
+		state.detail = "Train Race V4 energy before the next upgrade"
+		state.needsTraining = true
+	elseif code == 2 then
+		state.key = "buy_gear_1"
+		state.label = "BUY NEXT GEAR"
+		state.detail = "First Race V4 gear upgrade is available"
+		state.needsPurchase = true
+	elseif code == 3 then
+		state.key = "training_stage_2"
+		state.label = "TRAINING REQUIRED"
+		state.detail = "Train again to improve transformation duration"
+		state.needsTraining = true
+	elseif code == 4 then
+		state.key = "buy_duration_upgrade"
+		state.label = "BUY DURATION UPGRADE"
+		state.detail = "Transformation limit upgrade is available"
+		state.needsPurchase = true
+	elseif code == 5 then
+		state.key = "completed"
+		state.label = "RACE V4 COMPLETED"
+		state.detail = "All Race V4 upgrades are complete"
+		state.complete = true
+	elseif code == 6 then
+		local completed = math.clamp((progress or 2) - 2, 0, 3)
+		local remaining = math.max(0, 3 - completed)
+		state.key = "three_session_training"
+		state.label = remaining > 0 and "TRAINING REQUIRED" or "TRAINING CHECKING"
+		state.completedTraining = completed
+		state.remainingTraining = remaining
+		state.detail = "Additional sessions: " .. tostring(completed) .. "/3 completed"
+		state.needsTraining = remaining > 0
+	elseif code == 7 then
+		state.key = "buy_next_upgrade"
+		state.label = "BUY NEXT UPGRADE"
+		state.detail = "The next Race V4 upgrade is available"
+		state.needsPurchase = true
+	elseif code == 8 then
+		local remaining = math.max(0, 10 - (progress or 0))
+		state.key = "mastery_training"
+		state.label = remaining > 0 and "MASTERY TRAINING" or "MASTERY COMPLETE"
+		state.remainingTraining = remaining
+		state.completedTraining = math.clamp(progress or 0, 0, 10)
+		state.detail = remaining > 0
+            and (tostring(remaining) .. " mastery training sessions remaining")
+            or "All optional mastery sessions are complete"
+		state.needsTraining = remaining > 0
+		state.complete = remaining <= 0
+	elseif code == 9 then
+		state.key = "special_race_path"
+		state.label = "SPECIAL RACE PATH"
+		state.detail = "This race uses a different V4 upgrade path"
+	else
+		state.key = "not_ready"
+		state.label = "NOT TRIAL READY"
+		state.detail = "Unknown UpgradeRace state: " .. tostring(code)
+	end
+
+    -- B N FIX M NH NH T: B p script,  p acc Help ph i l m   d  Max V4
+	if isAlly then
+		state.complete = false
+		state.canTrial = true
+		state.needsPurchase = false
+		state.needsTraining = false
+		state.key = "trial_ready"
+		state.label = "READY FOR TRIAL"
+		state.detail = "Helper is ready to support"
+	end
+	V4StatusCache.at = tick()
+	V4StatusCache.data = state
+	return state
+end
+
+function getdialogoftemple()
+	return getV4Status(true).detail
+end
+
+function trialable(forceRefresh)
+	local state = getV4Status(forceRefresh == true)
+
+    -- [B N FIX T  CH I  I H U]:  p acc Help lu n b o "s n s ng"  i l n c a d    Max V4
+	if isAlly then
+		return true, state.gear or 5
+	end
+	if state.canTrial then
+		return true, state.gear
+	end
+	if state.complete then
+		return false, "completed"
+	end
+	if state.needsPurchase then
+		local fragments = 0
+		pcall(function()
+			fragments = tonumber(Players.LocalPlayer.Data.Fragments.Value) or 0
+		end)
+		if state.cost > 0 and fragments >= state.cost then
+			local ok, bought = pcall(function()
+				return invokeUpgradeRace("Buy")
+			end)
+			invalidateV4Status()
+			if ok and bought then
+				return false, "upgrade_bought"
+			end
+			return false, "buy_failed"
+		end
+		return false, "raiding"
+	end
+	if state.needsTraining then
+		return false, state.remainingTraining or "training"
+	end
+	return false, state.key
+end
+local AttackConfig = {
+	AttackDistance = 65,
+	AttackMobs = true,
+	AttackPlayers = true,
+	AttackCooldown = 0.06,
+	ComboResetTime = 0.3,
+	MaxCombo = 4,
+	HitboxLimbs = {
+		"RightLowerArm",
+		"RightUpperArm",
+		"LeftLowerArm",
+		"LeftUpperArm",
+		"RightHand",
+		"LeftHand"
+	},
+	AutoClickEnabled = true
+}
+
+local FastAttack = {}
+FastAttack.__index = FastAttack
+
+function FastAttack.new()
+	local self = setmetatable({
+		Debounce = 0,
+		ComboDebounce = 0,
+		ShootDebounce = 0,
+		M1Combo = 0,
+		EnemyRootPart = nil,
+		Connections = {},
+		Overheat = {
+			Dragonstorm = {
+				MaxOverheat = 3,
+				Cooldown = 0,
+				TotalOverheat = 0,
+				Distance = 350,
+				Shooting = false
+			}
+		},
+		ShootsPerTarget = {
+			["Dual Flintlock"] = 2
+		},
+		SpecialShoots = {
+			["Skull Guitar"] = "TAP",
+			["Bazooka"] = "Position",
+			["Cannon"] = "Position",
+			["Dragonstorm"] = "Overheat"
+		}
+	}, FastAttack)
+	pcall(function()
+		self.CombatFlags = require(Modules.Flags).COMBAT_REMOTE_THREAD
+		self.ShootFunction = getupvalue(require(ReplicatedStorage.Controllers.CombatController).Attack, 9)
+		local LocalScript = Player:WaitForChild("PlayerScripts"):FindFirstChildOfClass("LocalScript")
+		if LocalScript and getsenv then
+			self.HitFunction = getsenv(LocalScript)._G.SendHitsToServer
+		end
+	end)
+	return self
+end
+
+function FastAttack:IsEntityAlive(entity)
+	local humanoid = entity and entity:FindFirstChild("Humanoid")
+	return humanoid and humanoid.Health > 0
+end
+
+function FastAttack:CheckStun(Character, Humanoid, ToolTip)
+	local Stun = Character:FindFirstChild("Stun")
+	local Busy = Character:FindFirstChild("Busy")
+	if Humanoid.Sit and (ToolTip == "Sword" or ToolTip == "Melee" or ToolTip == "Blox Fruit") then
+		return false
+	elseif Stun and Stun.Value > 0 or Busy and Busy.Value then
+		return false
+	end
+	return true
+end
+
+function FastAttack:GetBladeHits(Character, Distance)
+	local Position = Character:GetPivot().Position
+	local BladeHits = {}
+	Distance = Distance or AttackConfig.AttackDistance
+	local function ProcessTargets(Folder)
+		for _, Enemy in ipairs(Folder:GetChildren()) do
+			pcall(function()
+				if Enemy ~= Character and self:IsEntityAlive(Enemy) then
+					local BasePart = Enemy:FindFirstChild(AttackConfig.HitboxLimbs[math.random(#AttackConfig.HitboxLimbs)]) or Enemy:FindFirstChild("HumanoidRootPart")
+					if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
+						if not self.EnemyRootPart then
+							self.EnemyRootPart = BasePart
+						else
+							table.insert(BladeHits, {
+								Enemy,
+								BasePart
+							})
+							table.insert(BladeHits, {})
+						end
+					end
+				end
+			end)
+		end
+	end
+	if AttackConfig.AttackMobs then
+		pcall(ProcessTargets, Workspace:WaitForChild("Enemies"))
+	end
+	if AttackConfig.AttackPlayers then
+		pcall(ProcessTargets, Workspace:WaitForChild("Characters"))
+	end
+	return BladeHits
+end
+
+function FastAttack:GetClosestEnemy(Character, Distance)
+	local BladeHits = self:GetBladeHits(Character, Distance)
+	local Closest, MinDistance = nil, math.huge
+	for _, Hit in ipairs(BladeHits) do
+		local Magnitude = (Character:GetPivot().Position - Hit[2].Position).Magnitude
+		if Magnitude < MinDistance then
+			MinDistance = Magnitude;
+			Closest = Hit[2]
+		end
+	end
+	return Closest
+end
+
+function FastAttack:GetCombo()
+	local Combo = (tick() - self.ComboDebounce) <= AttackConfig.ComboResetTime and self.M1Combo or 0
+	Combo = Combo >= AttackConfig.MaxCombo and 1 or Combo + 1
+	self.ComboDebounce = tick()
+	self.M1Combo = Combo
+	return Combo
+end
+
+function FastAttack:ShootInTarget(TargetPosition)
+	local Character = Player.Character
+	if not self:IsEntityAlive(Character) then
+		return
+	end
+	local Equipped = Character:FindFirstChildOfClass("Tool")
+	if not Equipped or Equipped.ToolTip ~= "Gun" then
+		return
+	end
+	local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or 0.3
+	if (tick() - self.ShootDebounce) < Cooldown then
+		return
+	end
+	local ShootType = self.SpecialShoots[Equipped.Name] or "Normal"
+	if ShootType == "Position" or (ShootType == "TAP" and Equipped:FindFirstChild("RemoteEvent")) then
+		Equipped:SetAttribute("LocalTotalShots", (Equipped:GetAttribute("LocalTotalShots") or 0) + 1)
+		GunValidator:FireServer(self:GetValidator2())
+		if ShootType == "TAP" then
+			Equipped.RemoteEvent:FireServer("TAP", TargetPosition)
+		else
+			ShootGunEvent:FireServer(TargetPosition)
+		end
+		self.ShootDebounce = tick()
+	else
+		VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+		task.wait(0.05)
+		VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+		self.ShootDebounce = tick()
+	end
+end
+
+function FastAttack:GetValidator2()
+	local v1 = getupvalue(self.ShootFunction, 15)
+	local v2 = getupvalue(self.ShootFunction, 13)
+	local v3 = getupvalue(self.ShootFunction, 16)
+	local v4 = getupvalue(self.ShootFunction, 17)
+	local v5 = getupvalue(self.ShootFunction, 14)
+	local v6 = getupvalue(self.ShootFunction, 12)
+	local v7 = getupvalue(self.ShootFunction, 18)
+	local v8 = v6 * v2
+	local v9 = (v5 * v2 + v6 * v1) % v3
+	v9 = (v9 * v3 + v8) % v4
+	v5 = math.floor(v9 / v3)
+	v6 = v9 - v5 * v3
+	v7 = v7 + 1
+	setupvalue(self.ShootFunction, 15, v1)
+	setupvalue(self.ShootFunction, 13, v2)
+	setupvalue(self.ShootFunction, 16, v3)
+	setupvalue(self.ShootFunction, 17, v4)
+	setupvalue(self.ShootFunction, 14, v5)
+	setupvalue(self.ShootFunction, 12, v6)
+	setupvalue(self.ShootFunction, 18, v7)
+	return math.floor(v9 / v4 * 16777215), v7
+end
+
+function FastAttack:UseNormalClick(Character, Humanoid, Cooldown)
+	self.EnemyRootPart = nil
+	local BladeHits = self:GetBladeHits(Character)
+	if self.EnemyRootPart then
+		RegisterAttack:FireServer(Cooldown)
+		if self.CombatFlags and self.HitFunction then
+			self.HitFunction(self.EnemyRootPart, BladeHits)
+		else
+			RegisterHit:FireServer(self.EnemyRootPart, BladeHits)
+		end
+	end
+end
+
+function FastAttack:UseFruitM1(Character, Equipped, Combo)
+	local Targets = self:GetBladeHits(Character)
+	if not Targets[1] then
+		return
+	end
+	local Direction = (Targets[1][2].Position - Character:GetPivot().Position).Unit
+	Equipped.LeftClickRemote:FireServer(Direction, Combo)
+end
+
+function FastAttack:Attack()
+	if not AttackConfig.AutoClickEnabled or (tick() - self.Debounce) < AttackConfig.AttackCooldown then
+		return
+	end
+	local Character = Player.Character
+	if not Character or not self:IsEntityAlive(Character) then
+		return
+	end
+	local Humanoid = Character.Humanoid
+	local Equipped = Character:FindFirstChildOfClass("Tool")
+	if not Equipped then
+		return
+	end
+	local ToolTip = Equipped.ToolTip
+	if not table.find({
+		"Melee",
+		"Blox Fruit",
+		"Sword",
+		"Gun"
+	}, ToolTip) then
+		return
+	end
+	local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or AttackConfig.AttackCooldown
+	if not self:CheckStun(Character, Humanoid, ToolTip) then
+		return
+	end
+	local Combo = self:GetCombo()
+	Cooldown = Cooldown + (Combo >= AttackConfig.MaxCombo and 0.05 or 0)
+	self.Debounce = Combo >= AttackConfig.MaxCombo and ToolTip ~= "Gun" and (tick() + 0.05) or tick()
+	if ToolTip == "Blox Fruit" and Equipped:FindFirstChild("LeftClickRemote") then
+		self:UseFruitM1(Character, Equipped, Combo)
+	elseif ToolTip == "Gun" then
+		local Target = self:GetClosestEnemy(Character, 120)
+		if Target then
+			self:ShootInTarget(Target.Position)
+		end
+	else
+		self:UseNormalClick(Character, Humanoid, Cooldown)
+	end
+end
+
+-- seexme.lua keeps the normal combat controller alive on every physics step.
+-- Trial movement only positions/equips the character; this loop performs the
+-- actual validated melee hit sequence used by Human and Ghoul trials.
+local previousAttackConnection = getgenv().__KAITUN_ATTACK_CONNECTION
+if previousAttackConnection then
+	pcall(function()
+		previousAttackConnection:Disconnect()
+	end)
+end
+local AttackInstance = FastAttack.new()
+local attackConnection = RunService.Stepped:Connect(function()
+	-- _G.TYRANT_FARMING: khi farm Tyrant, TyrFastAttack la nguoi duy nhat
+	-- ban RegisterAttack/RegisterHit. Hai luong cung ban se bi server
+	-- rate-validate va drop het -> "attack loi".
+	if AttackConfig.AutoClickEnabled and not _G.TYRANT_FARMING then
+		pcall(function()
+			module:haki()
+			AttackInstance:Attack()
+		end)
+	end
+end)
+table.insert(AttackInstance.Connections, attackConnection)
+getgenv().__KAITUN_ATTACK_CONNECTION = attackConnection
+
+local function getExtractAttackTargets()
+	local character = Player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return {}
+	end
+
+	local targets = {}
+	local function collect(folder)
+		if not folder then
+			return
+		end
+		for _, entity in ipairs(folder:GetChildren()) do
+			if entity ~= character then
+				local humanoid = entity:FindFirstChild("Humanoid")
+				local entityRoot = entity:FindFirstChild("HumanoidRootPart")
+				if humanoid and entityRoot and humanoid.Health > 0
+					and (entityRoot.Position - root.Position).Magnitude <= AttackConfig.AttackDistance
+				then
+					targets[#targets + 1] = entity
+				end
+			end
+		end
+	end
+
+	if AttackConfig.AttackMobs then
+		collect(Workspace:FindFirstChild("Enemies"))
+	end
+	if AttackConfig.AttackPlayers then
+		collect(Workspace:FindFirstChild("Characters"))
+	end
+	return targets
+end
+
+local lastExtractAttackAt = -math.huge
+local function extractAttack()
+	if not AttackConfig.AutoClickEnabled then
+		return false
+	end
+	if tick() - lastExtractAttackAt < AttackConfig.AttackCooldown then
+		return false
+	end
+	local targets = getExtractAttackTargets()
+	if #targets == 0 then
+		return false
+	end
+
+	local firstHit = nil
+	local hitList = {}
+	for _, entity in ipairs(targets) do
+		local hitPart = entity:FindFirstChild("Head") or entity:FindFirstChild("HumanoidRootPart")
+		local entityRoot = entity:FindFirstChild("HumanoidRootPart")
+		if hitPart and entityRoot then
+			firstHit = firstHit or hitPart
+			-- Server doc hit list theo cap {entity, part} roi mot bang rong dem.
+			-- Day thang entity vao lam lech moi cap phia sau -> huy ca goi hit.
+			hitList[#hitList + 1] = { entity, entityRoot }
+			hitList[#hitList + 1] = {}
+		end
+	end
+	if not firstHit then
+		return false
+	end
+
+	-- RegisterAttack chi can mot lan cho moi goi hit, khong phai moi target.
+	pcall(function()
+		RegisterAttack:FireServer(0)
+	end)
+	pcall(function()
+		RegisterHit:FireServer(firstHit, hitList, nil, "078da5141")
+	end)
+	lastExtractAttackAt = tick()
+	return true
+end
+
+local extractAttackToken = {}
+getgenv().__KAITUN_EXTRACT_ATTACK = extractAttackToken
+
+_G.ShouldSendData = false
+local issobusy = false
+
+-- Bo 2 loadstring SkibidiHub111 (Luraph obfuscated, khong audit duoc).
+-- v4.lua khong phu thuoc: moi global tu chung (_G.Encode) deu co type-guard
+-- + fallback, nen xoa khong anh huong chuc nang.
+print("[v4] remote hub scripts skipped")
+
+local JOB_ID = game.JobId
+local USERNAME = Players.LocalPlayer.Name
+local readySent = false
+local abilityCooldown = 0
+
+-- ============================================================
+--   LOCAL GROUP (thay th  h  th ng gh p c p qua server API)
+--   matchState gi  lu n = 1 object c   nh, kh ng g i API n a.
+--   Main = every executing account not listed in HelpWhitelist.
+--   Help = accounts explicitly listed in HelpWhitelist.
+--   isallies    c set s n t  block whitelist ph a tr n.
+-- ============================================================
+local configuredCentralHubUrl = tostring((getgenv().Config or {})["Central Hub WebSocket"] or "")
+local centralHubConfigured = configuredCentralHubUrl ~= ""
+	and not configuredCentralHubUrl:find("HOANGLAM_ISGAY", 1, true)
+local localGroupId = "local_" .. mainAccountName
+local matchState = {
+	assigned = not centralHubConfigured and (mainAccountName ~= ""),
+	group_id = localGroupId,
+	main_username = mainAccountName,
+	main_job_id = game.JobId,
+	helpers = {},
+	all_in_job = true,
+}
+local isCurrentlyTraining  = false
+task.spawn(function()
+	while task.wait(2) do
+		if getgenv().UpdateRoles then
+			getgenv().UpdateRoles()
+		end
+		if matchState then
+			-- [FIX] Check V4 state: n u c n training/purchase th  T T paired mode
+			--   main loop ch y v o runWaitingAccountWork()   farm mobs
+			local v4s = nil
+			pcall(function() v4s = getV4Status(false) end)
+			local needsIndependentWork = v4s and (v4s.needsTraining or v4s.needsPurchase)
+			local hubAssignment = getgenv().__KAITUN_HUB_ASSIGNMENT
+			local hubAssignmentActive = type(hubAssignment) == "table"
+				and tick() - (tonumber(hubAssignment.receivedAt) or 0) < 900
+			if needsIndependentWork then
+				matchState.assigned = false
+			elseif hubAssignmentActive then
+				-- applyHubAssignment owns the group fields while the Hub assignment is active.
+				matchState.assigned = true
+			elseif centralHubConfigured then
+				matchState.assigned = false
+				matchState.group_id = ""
+				matchState.main_username = ""
+				matchState.main_job_id = game.JobId
+				matchState.helpers = {}
+				matchState.all_in_job = false
+			else
+				matchState.assigned = (mainAccountName ~= "")
+				matchState.group_id = "local_" .. mainAccountName
+				matchState.main_username = mainAccountName
+				local list = {}
+				for name, _ in pairs(isallies) do
+					table.insert(list, name)
+				end
+				matchState.helpers = list
+			end
+		end
+	end
+end)
+
+local mainJobId = game.JobId
+local matchTeleportAt = 0
+local scheduledRoundId = ""
+local handledRoundId = ""
+local lastReadyWrite = 0
+local currentTaskStatus = "starting"
+local pairAssignedAt = tick()
+local pairAllInJobAt = tick()
+local pairTempleReadyAt = 0
+local lastTempleReadyCount = 0
+local lastPairGroupId = localGroupId
+local localRequeueBlockUntil = 0
+local releasingGroup = false
+local gearClaimInProgress = false
+local lastTempleForceAt = 0
+local lastTempleProgressAt = 0
+local lastTempleDistance = math.huge
+local pairTrialCycleStarted = false
+local pairV3ActivatedAt = 0
+local failedRoundId = ""
+local helperSacrificeDone = false
+local postTrialTransitionInProgress = false
+local lastPostTrialTransitionAt = 0
+local lastTrialActionAt = 0
+local PAIR_TEMPLE_TIMEOUT = math.max(15, tonumber(getgenv().Config["Pair Temple Timeout"]) or 35)
+local stickyPairSetting = getgenv().Config["Pair Sticky Until Trial Complete"]
+if stickyPairSetting == nil then
+	stickyPairSetting = getgenv().Config["Pair Sticky Until Gear"]
+end
+local PAIR_STICKY_UNTIL_TRIAL_COMPLETE = stickyPairSetting ~= false
+local PAIR_RELEASE_AFTER_TRIAL = getgenv().Config["Pair Release After Trial"] ~= false
+local PAIR_REQUEUE_DELAY = math.max(5, tonumber(getgenv().Config["Pair Requeue Delay"]) or 15)
+local PAIR_FORCE_TEMPLE_INTERVAL = math.max(0.25, tonumber(getgenv().Config["Pair Force Temple Interval"]) or 0.8)
+local V3_DOOR_DISTANCE = math.max(10, tonumber(getgenv().Config["V3 Door Distance"]) or 50)
+local V3_COUNTDOWN = math.max(1, tonumber(getgenv().Config["V3 Countdown"]) or 6)
+local V3_READY_HOLD = math.max(0.2, tonumber(getgenv().Config["V3 Ready Hold Time"]) or 0.6)
+local V3_WS_SYNC = getgenv().Config["V3 WebSocket Sync"] ~= false
+local V3_REQUIRE_DIFFERENT_RACES = getgenv().Config["V3 Require Different Races"] ~= false
+local V3_FIRE_COUNT = math.max(1, math.floor(tonumber(getgenv().Config["V3 Fire Count"]) or 1))
+local V3_FIRE_INTERVAL = math.max(0.03, tonumber(getgenv().Config["V3 Fire Interval"]) or 0.05)
+
+function req()
+	return http_request or http and http.request or request or syn and syn.request
+end
+
+function jsonEncode(t)
+	return HttpService:JSONEncode(t)
+end
+
+function jsonDecode(s)
+	return HttpService:JSONDecode(s)
+end
+
+function getRole()
+	if isUper then
+		return "upgear"
+	end
+	if isAlly then
+		return "allies"
+	end
+	return "none"
+end
+
+-- apiPost/apiGet kh ng c n g i server th t n a   h  th ng gh p c p
+-- gi  ch y ho n to n local, c c h m n y gi  l i   kh ng v  ch  g i c 
+-- nh ng lu n tr  nil (no-op), kh ng c  request HTTP n o  c g i.
+function apiPost(path, body)
+	return nil
+end
+
+function apiGet(path)
+	return nil
+end
+
+-- Trial barrier state: once our own Trial ends we hold inside the Temple until
+-- every member finished, then Helpers reset so the Main survives the FFA.
+function resetTrialBarrierState()
+	trialCycleDone = false
+	trialCycleDoneAt = 0
+	trialTimerSeen = false
+	trialTimerLostAt = 0
+	trialBarrierSacrificeAt = 0
+	lastBarrierGearCheckAt = 0
+	groupTrialDoneAt = {}
+	groupTrialSeenInsideAt = {}
+end
+resetTrialBarrierState()
+
+function resetLocalPairState()
+    -- V i local group c   nh, kh ng c n reset matchState v  nil n a
+    -- v  matchState lu n t n t i (g n c ng t  whitelist l c load script).
+	mainJobId = game.JobId
+	readySent = false
+	scheduledRoundId = ""
+	handledRoundId = ""
+	lastPairGroupId = localGroupId
+	pairAssignedAt = tick()
+	pairAllInJobAt = tick()
+	pairTempleReadyAt = 0
+	lastTempleReadyCount = 0
+	lastTempleForceAt = 0
+	lastTempleProgressAt = 0
+	lastTempleDistance = math.huge
+	pairTrialCycleStarted = false
+	pairV3ActivatedAt = 0
+	failedRoundId = ""
+	helperSacrificeDone = false
+	resetTrialBarrierState()
+end
+
+function releaseCurrentGroup(reason)
+	reason = tostring(reason or "completed")
+	local assignment = getgenv().__KAITUN_HUB_ASSIGNMENT
+	local groupId = type(assignment) == "table" and tostring(assignment.groupId or "") or ""
+	local coordinator = getgenv().__KAITUN_V4_COORDINATOR
+	local socket = coordinator and coordinator.socket
+	if groupId ~= "" and socket then
+		pcall(function()
+			local send = socket.Send or socket.send
+			assert(type(send) == "function", "WebSocket send method is unavailable")
+			send(socket, HttpService:JSONEncode({
+				type = "CANCEL_ASSIGNMENT_REQUEST",
+				sender = USERNAME,
+				groupId = groupId,
+				reason = reason
+			}))
+		end)
+	end
+	getgenv().__KAITUN_HUB_ASSIGNMENT = nil
+	if centralHubConfigured then
+		matchState.assigned = false
+		matchState.group_id = ""
+		matchState.main_username = ""
+		matchState.main_job_id = game.JobId
+		matchState.helpers = {}
+		matchState.all_in_job = false
+	end
+	status("Trial cycle reset: " .. reason)
+	resetLocalPairState()
+	return true
+end
+
+function computeQueueReady()
+	if not (isnight() and isfullmoon()) then
+		return false, "waiting_full_moon"
+	end
+	local ok, canTrial = pcall(function()
+		local ready = trialable()
+		return ready == true
+	end)
+	if ok and canTrial then
+		return true, "ready_for_pair"
+	end
+	return false, "not_trial_ready"
+end
+
+function getCurrentUpgearTurn()
+	if mainAccountName ~= "" then
+		return mainAccountName
+	end
+	if isUper then
+		return USERNAME
+	end
+	return nil
+end
+
+function isMyUpgearTurn()
+    -- Local group: Main lu n  c coi l   ng l t c a ch nh m nh,
+    -- kh ng c n ph  thu c v o d  li u tr  v  ( i khi sai) t  API.
+	return isUper
+end
+
+function isOtherUpgearTraining()
+    -- Help: "ng i kh c"  ang train lu n l  Main trong group local c a m nh
+	if not isAlly then
+		return false
+	end
+	return mainAccountName ~= ""
+end
+
+function updateDynamicGroupConfig(response)
+    -- Kh ng c n d ng   group config gi  c   nh t  whitelist, kh ng
+    -- nh n d  li u  ng t  server n a.
+end
+
+function refreshMatch()
+    -- Kh ng g i API n a. matchState    c g n c   nh l c script load.
+    -- H m n y gi  l i (no-op)   c c task.spawn g i refreshMatch  nh k 
+    -- kh ng b  l i "attempt to call a nil value".
+	return matchState
+end
+
+function sendMainJob()
+	return refreshMatch()
+end
+
+function getMainJob()
+	if matchState and matchState.main_job_id then
+		return matchState.main_job_id
+	end
+	return mainJobId
+end
+
+task.spawn(function()
+	while task.wait(2) do
+		pcall(refreshMatch)
+	end
+end)
+
+function autoEquipGear()
+	local gearConfig = getgenv().Config["Gear"]
+	if not gearConfig or #gearConfig ~= 5 then
+		return
+	end
+	local slot1Type = string.sub(gearConfig, 1, 1)
+	local slot2Type = string.sub(gearConfig, 3, 3)
+	local slot3Type = string.sub(gearConfig, 5, 5)
+	local accessoryMap = {
+		["A"] = {
+			"Pale Scarf",
+			"Pink Coat",
+			"Valentine's Necklace",
+			"Black Cape",
+			"Swan Glasses",
+			"Tomoe Ring",
+			"Dark Coat",
+			"Musketeer Hat",
+			"Kitsune Mask",
+			"Kitsune Ribbon",
+			"Lei",
+			"Pretty Helmet"
+		},
+		["B"] = {
+			"Ghoul Mask",
+			"Winter Sky",
+			"Black Spikey Coat",
+			"Koko's Glasses",
+			"Berserker Mask",
+			"Warrior Helmet",
+			"Water Key Necklace",
+			"Pilot Helmet"
+		},
+		["C"] = {
+			"Marine Cap",
+			"Swordsman Hat",
+			"Usoap's Hat",
+			"Choppa's Hat",
+			"Robin's Glasses",
+			"Namis Glasses",
+			"Brook's Glasses",
+			"Bobby's Glasses",
+			"Jaw's Glasses",
+			"Bear Ears",
+			"Cool Shades",
+			"Skeleton Mask"
+		}
+	}
+	local function getPriority(accessoryName)
+		for tier, names in pairs(accessoryMap) do
+			for _, name in ipairs(names) do
+				if accessoryName:find(name) then
+					return tier == "A" and 3 or tier == "B" and 2 or 1
+				end
+			end
+		end
+		return 0
+	end
+	local function findBestAccessoryInBackpack()
+		local best, bestPriority = nil, -1
+		for _, tool in ipairs(Players.LocalPlayer.Backpack:GetChildren()) do
+			if tool:IsA("Accessory") then
+				local priority = getPriority(tool.Name)
+				if priority > bestPriority then
+					bestPriority = priority;
+					best = tool
+				end
+			end
+		end
+		return best
+	end
+	local character = Players.LocalPlayer.Character
+	if not character then
+		return
+	end
+	local function equipToSlot(slotIndex, desiredType)
+		local currentAccessory = character:FindFirstChildOfClass("Accessory")
+		if currentAccessory and currentAccessory.Name:find("Accessory") then
+			local currentPriority = getPriority(currentAccessory.Name)
+			local desiredPriority = desiredType == "-" and 99 or (accessoryMap[desiredType] and (desiredType == "A" and 3 or desiredType == "B" and 2 or 1) or 0)
+			if currentPriority >= desiredPriority then
+				return
+			end
+		end
+		local bestBackpack = findBestAccessoryInBackpack()
+		if bestBackpack then
+			local backpackPriority = getPriority(bestBackpack.Name)
+			local desiredPriority = desiredType == "-" and 0 or (accessoryMap[desiredType] and (desiredType == "A" and 3 or desiredType == "B" and 2 or 1) or 0)
+			if backpackPriority >= desiredPriority then
+				Players.LocalPlayer.Character.Humanoid:EquipTool(bestBackpack)
+			end
+		end
+	end
+	if Players.LocalPlayer.Backpack:FindFirstChildOfClass("Accessory") then
+		equipToSlot(1, slot1Type)
+	end
+end
+
+function checkgear()
+	if gearClaimInProgress or not CommF_ then
+		return false
+	end
+	gearClaimInProgress = true
+	local function finish(result)
+		gearClaimInProgress = false
+		return result
+	end
+	local function snapshot(clockData)
+		local details = clockData and clockData.RaceDetails
+		if type(details) ~= "table" then
+			return nil
+		end
+		local gears = type(details.Gears) == "table" and details.Gears or {}
+		local gearParts = {}
+		for index = 1, 3 do
+			gearParts[index] = tostring(gears[index] or "")
+		end
+		return {
+			hadPoint = clockData.HadPoint == true,
+			raceLevel = tonumber(clockData.RaceLevel) or 0,
+			a = tonumber(details.A) or 0,
+			b = tonumber(details.B) or 0,
+			c = tonumber(details.C) or 0,
+			completed = tonumber(details.Completed) or tonumber(clockData.Completed) or 0,
+			gears = table.concat(gearParts, "|"),
+			rawGears = {
+				gearParts[1],
+				gearParts[2],
+				gearParts[3]
+			}
+		}
+	end
+	local ok, beforeData = pcall(function()
+		return CommF_:InvokeServer("TempleClock", "Check")
+	end)
+	local before = ok and snapshot(beforeData) or nil
+	if not before then
+		return finish(false)
+	end
+
+    -- L y config gear (M c  nh ho c T i  u theo t c)
+	local pattern = getgenv().Config and getgenv().Config["Gear"] or "B-B-A"
+	if getgenv().Config and getgenv().Config["ChangeBestGear"] then
+		local race = Players.LocalPlayer.Data.Race.Value
+		if bestGearForRace and bestGearForRace[race] then
+			pattern = bestGearForRace[race]
+		end
+	end
+	local g1, g2, g3 = tostring(pattern):match("^([AB])%-([AB])%-([AB])$")
+	if not g1 or not g2 or not g3 then
+		g1, g2, g3 = "B", "B", "A"
+	end
+	local convert = {
+		A = "Alpha",
+		B = "Omega"
+	}
+	local targetGears = {
+		convert[g1],
+		convert[g2],
+		convert[g3]
+	}
+	local installedCount = before.a + before.b
+
+    -- === T NH N NG M I: T   NG XOAY/ I GEAR KHI   MAX V4 ===
+	if installedCount >= 3 then
+		local changedAny = false
+		for i = 1, 3 do
+            -- N u gear hi n t i kh c v i gear mong mu n trong Config, ti n h nh  i
+			if before.rawGears[i] ~= "" and before.rawGears[i] ~= targetGears[i] then
+				local slotNameToChange = "Gear" .. tostring(i + 1)
+				pcall(function()
+					CommF_:InvokeServer("TempleClock", "ChangeGear", slotNameToChange, targetGears[i])
+				end)
+				changedAny = true
+				task.wait(0.5)
+			end
+		end
+		if changedAny then
+			invalidateV4Status()
+			finish(true)
+			return true
+		end
+        
+        -- N u gear   chu n theo Config -> Kh ng c n  i, pass qua
+		finish(false)
+		return false
+	end
+
+    -- === T NH N NG C : CLAIM (L Y) GEAR M I KHI C  POINT ===
+	if beforeData.HadPoint ~= true then
+		return finish(false)
+	end
+	local slotName = nil
+	local choose = nil
+	local isFirstGear = before.raceLevel < 2
+	if isFirstGear then
+		slotName = "Gear1"
+	else
+		if installedCount < 0 or installedCount > 2 then
+			return finish(false)
+		end
+		local slotIndex = installedCount + 2
+		local slotPattern = {
+			g1,
+			g2,
+			g3
+		}
+		slotName = "Gear" .. tostring(slotIndex)
+		choose = convert[slotPattern[installedCount + 1]]
+
+        -- Lu t c a Blox Fruits: T i  a 2 Alpha ho c 2 Omega
+		if before.a >= 2 then
+			choose = "Omega"
+		elseif before.b >= 2 then
+			choose = "Alpha"
+		elseif choose ~= "Alpha" and choose ~= "Omega" then
+			choose = "Omega"
+		end
+	end
+	local spentOk, spentResult = pcall(function()
+		if isFirstGear then
+			return CommF_:InvokeServer("TempleClock", "SpendPoint")
+		end
+		return CommF_:InvokeServer("TempleClock", "SpendPoint", slotName, choose)
+	end)
+	if not spentOk or spentResult == false then
+		return finish(false)
+	end
+	local claimed = false
+	for _ = 1, 12 do
+		task.wait(0.35)
+		local verifyOk, verifyData = pcall(function()
+			return CommF_:InvokeServer("TempleClock", "Check")
+		end)
+		local after = verifyOk and snapshot(verifyData) or nil
+		if after and verifyData.HadPoint == false then
+			local progressionChanged
+			if isFirstGear then
+				progressionChanged = after.raceLevel > before.raceLevel or after.completed ~= before.completed or after.gears ~= before.gears
+			else
+				progressionChanged = after.a ~= before.a
+                    or after.b ~= before.b
+                    or after.gears ~= before.gears
+                    or after.completed ~= before.completed
+			end
+			if progressionChanged then
+				claimed = true
+				break
+			end
+		end
+	end
+	if claimed then
+		invalidateV4Status()
+		finish(true)
+		if isUper and isMyUpgearTurn() then
+			task.spawn(function()
+				beginPostTrialFarmTransition("gear_claimed")
+			end)
+		end
+		return true
+	end
+	return finish(false)
+end
+
+task.spawn(function()
+	while task.wait(5) do
+		if Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("Humanoid") then
+			pcall(autoEquipGear)
+		end
+	end
+end)
+
+task.spawn(function()
+	while task.wait(1) do
+		if isUper and isMyUpgearTurn() then
+			local v4st = getV4Status(false)
+			if (matchState and matchState.assigned) or (v4st and v4st.needsGearClaim) then
+				pcall(checkgear)
+			end
+		end
+	end
+end)
+
+local isCurrentGroupInThisServer
+local templeMoveGeneration = 0
+
+function localDoorState()
+	local door = getdoor()
+	local char = Players.LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local distance = math.huge
+	if door and hrp then
+		distance = (door.Position - hrp.Position).Magnitude
+	end
+	local timerVisible = false
+	pcall(function()
+		timerVisible = Players.LocalPlayer.PlayerGui.Main.Timer.Visible == true
+	end)
+	local alive = hum ~= nil and hum.Health > 0
+	local nearDoor = alive and door ~= nil and distance <= V3_DOOR_DISTANCE
+	return {
+		door = door,
+		distance = distance,
+		nearDoor = nearDoor,
+		timerVisible = timerVisible,
+		alive = alive
+	}
+end
+
+local TEMPLE_ENTRY_POSITION = Vector3.new(28310.0234, 14895.1123, 109.456741)
+function isInsideOwnTrial()
+	local _, trialLocation = getOwnTrialLocation()
+	if trialLocation then
+		local ok, distance = pcall(function()
+			return getdis(trialLocation.CFrame)
+		end)
+		if ok and distance < 1500 then
+			return true
+		end
+	end
+	local timerVisible = false
+	pcall(function()
+		timerVisible = Players.LocalPlayer.PlayerGui.Main.Timer.Visible == true
+	end)
+	return timerVisible
+end
+
+function forceMatchedAccountToTemple(isRetry)
+	if not isCurrentGroupInThisServer() or not (isnight() and isfullmoon()) then
+		return false
+	end
+	if not isRetry and isInsideOwnTrial() then
+		return true
+	end
+	if trialCycleDone and not isRetry then
+		-- Our Trial is already over: stay in the Temple instead of tweening back
+		-- to our own race door while the other members are still fighting.
+		return true
+	end
+	local v4st = getV4Status(false)
+	if not isRetry and v4st and v4st.needsGearClaim then
+		return true
+	end
+	if tick() - lastTempleForceAt < PAIR_FORCE_TEMPLE_INTERVAL then
+		return false
+	end
+	lastTempleForceAt = tick()
+	if not workspace.Map:FindFirstChild("Temple of Time") then
+		local templeRef = ReplicatedStorage.MapStash:FindFirstChild("Temple of Time")
+		if templeRef then
+			templeRef.Parent = workspace.Map
+		end
+	end
+	local door = getdoor()
+	local char = Players.LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		status("Paired - waiting character before Temple")
+		return false
+	end
+	local templeDistance = (root.Position - TEMPLE_ENTRY_POSITION).Magnitude
+	if not door or templeDistance > 3000 then
+		status(isRetry and "Trial retry - entering Temple of Time" or "Paired - entering Temple of Time")
+		pcall(function()
+			CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POSITION)
+		end)
+		return false
+	end
+	local distance = (door.Position - root.Position).Magnitude
+	if distance + 20 < lastTempleDistance then
+		lastTempleDistance = distance
+		lastTempleProgressAt = tick()
+	elseif lastTempleProgressAt <= 0 then
+		lastTempleProgressAt = tick()
+	end
+	if distance > V3_DOOR_DISTANCE then
+		status(string.format("Paired - flying to race door (%.0f)", distance))
+		pcall(function()
+			topos(door.CFrame)
+		end)
+		if tick() - lastTempleProgressAt > 8 then
+			lastTempleProgressAt = tick()
+			pcall(function()
+				CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POSITION)
+			end)
+			task.wait(0.25)
+			pcall(function()
+				topos(door.CFrame)
+			end)
+		end
+		return false
+	end
+	pcall(function()
+		topos(door.CFrame)
+	end)
+	status("Paired - at race door")
+	return true
+end
+
+function scheduleMatchedTempleMove(groupId)
+	templeMoveGeneration = templeMoveGeneration + 1
+	local generation = templeMoveGeneration
+	task.spawn(function()
+		local deadline = tick() + 45
+		while generation == templeMoveGeneration and tick() < deadline do
+			if currentGroupId() ~= tostring(groupId or "") or not isCurrentGroupInThisServer() then
+				return
+			end
+			if isInsideOwnTrial() or forceMatchedAccountToTemple() then
+				return
+			end
+			task.wait(0.5)
+		end
+	end)
+end
+
+function v3ServerNow()
+	local ok, value = pcall(function()
+		return Workspace:GetServerTimeNow()
+	end)
+	if ok and tonumber(value) then
+		return tonumber(value)
+	end
+	return tick()
+end
+
+-- ============================================================
+-- V3 synchronized activation via Central Hub WebSocket. Door-ready is reported in
+-- HEARTBEAT as v3Ready/v3Race; Hub broadcasts V3_COMMAND to all
+-- members with fireAt = now+V3_COUNTDOWN.
+-- ============================================================
+local v3ReadySince = 0
+
+function currentGroupId()
+	if matchState and matchState.assigned and matchState.group_id then
+		return tostring(matchState.group_id)
+	end
+	return ""
+end
+
+function currentGroupMembers()
+	local members = {}
+	local seen = {}
+	local function add(name)
+		name = tostring(name or "")
+		if name ~= "" and not seen[name] then
+			seen[name] = true
+			table.insert(members, name)
+		end
+	end
+	if matchState and matchState.assigned then
+		add(matchState.main_username)
+		for _, name in ipairs(matchState.helpers or {}) do
+			add(name)
+		end
+		for _, name in ipairs(matchState.members or {}) do
+			add(name)
+		end
+	end
+	if mainAccountName and mainAccountName ~= "" then
+		add(mainAccountName)
+	end
+	for name, _ in pairs(HelpWhitelist) do
+		if Players:FindFirstChild(name) then
+			add(name)
+		end
+	end
+	for name, _ in pairs(isallies) do
+		if Players:FindFirstChild(name) then
+			add(name)
+		end
+	end
+	if Player and Player.Name then
+		add(Player.Name)
+	end
+	return members
+end
+
+isCurrentGroupInThisServer = function()
+	return matchState ~= nil
+        and matchState.assigned == true
+        and tostring(matchState.main_job_id or "") == tostring(game.JobId)
+        and currentGroupId() ~= ""
+end
+
+function computeV3ReadyState()
+	if not isCurrentGroupInThisServer() then
+		v3ReadySince = 0
+		return false, "no_group", nil
+	end
+	local doorState = localDoorState()
+	local race = ""
+	pcall(function()
+		race = canonicalRaceName(Players.LocalPlayer.Data.Race.Value)
+	end)
+	local abilityName = race_abilities[canonicalRaceName(race)]
+	local abilityAvailable = abilityName ~= nil and checkbackpack(abilityName) ~= nil
+	local rawReady = tick() >= abilityCooldown
+        and doorState.alive
+        and doorState.nearDoor
+        and not doorState.timerVisible
+		and abilityAvailable
+	if rawReady then
+		if v3ReadySince == 0 then
+			v3ReadySince = tick()
+		end
+	else
+		v3ReadySince = 0
+	end
+	local debounced = rawReady and tick() - v3ReadySince >= V3_READY_HOLD
+	readySent = debounced
+	return debounced, debounced and "ready" or "waiting_door", { race = race, doorDistance = doorState.distance, timerVisible = doorState.timerVisible }
+end
+
+function getV3HeartbeatFields()
+	if not V3_WS_SYNC then
+		return { v3Ready = false, v3Race = getLocalRaceName(), v3DoorDistance = -1, v3GroupId = "", v3AbilityReady = false }
+	end
+	local ready, _, info = computeV3ReadyState()
+	return {
+		v3Ready = ready == true,
+		v3Race = info and tostring(info.race or "") or getLocalRaceName(),
+		v3DoorDistance = info and (info.doorDistance == math.huge and -1 or math.floor(info.doorDistance * 100) / 100) or -1,
+		v3GroupId = currentGroupId(),
+		v3AbilityReady = ready == true,
+	}
+end
+
+function commandHasCurrentUser(command)
+	local members = command.members or command.Members
+	if type(members) ~= "table" then return false end
+	for _, name in ipairs(members) do
+		local n = type(name) == "table" and (name.name or name.Name) or name
+		if tostring(n) == USERNAME then return true end
+	end
+	return false
+end
+
+function normalizeV3Command(raw)
+	if type(raw) ~= "table" then return nil end
+	local groupId = tostring(raw.groupId or raw.group_id or "")
+	local jobId = tostring(raw.jobId or raw.job_id or "")
+	local roundId = tostring(raw.roundId or raw.round_id or "")
+	local fireAt = tonumber(raw.fireAt or raw.fire_at)
+	local members = raw.members or raw.Members
+	if groupId == "" or roundId == "" or not fireAt or fireAt <= 0 then return nil end
+	return {
+		group_id = groupId,
+		job_id = jobId,
+		round_id = roundId,
+		fire_at = fireAt,
+		members = members,
+		groupId = groupId,
+		jobId = jobId,
+		roundId = roundId,
+		fireAt = fireAt,
+	}
+end
+
+function waitForSharedFireTime(fireAt)
+	local fireAtTick = tick() + math.max(0, (tonumber(fireAt) or 0) - v3ServerNow())
+	while true do
+		local remaining = fireAtTick - tick()
+		if remaining <= 0 then return end
+		status(string.format("V3 countdown %.2fs", remaining))
+		if remaining > 0.25 then
+			task.wait(math.min(0.10, math.max(0.03, remaining - 0.15)))
+		else
+			RunService.Heartbeat:Wait()
+		end
+	end
+end
+
+function isOwnV3AbilityActive()
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local abilityName = race_abilities[canonicalRaceName(getLocalRaceName())]
+	return root ~= nil and abilityName ~= nil and root:FindFirstChild(abilityName) ~= nil
+end
+
+function activateOwnV3Ability()
+	local character = Players.LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local abilityName = race_abilities[canonicalRaceName(getLocalRaceName())]
+	if not character or not humanoid or humanoid.Health <= 0 or not abilityName then
+		return false
+	end
+	if not checkbackpack(abilityName) then
+		status("V3 ability tool is missing: " .. tostring(abilityName))
+		return false
+	end
+	if isOwnV3AbilityActive() then
+		return true
+	end
+	for index = 1, V3_FIRE_COUNT do
+		pcall(function()
+			(ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommE")):FireServer("ActivateAbility")
+		end)
+		local verifyUntil = tick() + math.max(0.8, V3_FIRE_INTERVAL)
+		repeat
+			task.wait(0.03)
+		until isOwnV3AbilityActive() or tick() >= verifyUntil
+		if isOwnV3AbilityActive() then
+			return true
+		end
+	end
+	return false
+end
+
+function scheduleV3SocketRound(command)
+	command = normalizeV3Command(command)
+	if not command then return false end
+	local roundId = tostring(command.round_id or "")
+	local fireAt = tonumber(command.fire_at) or 0
+	if roundId == "" or fireAt <= 0 then return false end
+	if roundId == handledRoundId or roundId == scheduledRoundId or roundId == failedRoundId then
+		return false
+	end
+	if not commandHasCurrentUser(command) then return false end
+	scheduledRoundId = roundId
+	task.spawn(function()
+		waitForSharedFireTime(fireAt)
+		local validGroup = isCurrentGroupInThisServer()
+            and tostring(command.group_id or "") == currentGroupId()
+            and tostring(command.job_id or "") == tostring(game.JobId)
+		local doorState = localDoorState()
+		local fired = false
+		if validGroup and doorState.nearDoor and not doorState.timerVisible then
+			status("Activating Race V3 from shared time")
+			fired = activateOwnV3Ability()
+			if fired then
+				handledRoundId = roundId
+				failedRoundId = ""
+				abilityCooldown = tick() + 30
+				readySent = false
+				helperSacrificeDone = false
+				pairTrialCycleStarted = true
+				pairV3ActivatedAt = tick()
+				status("Race V3 activation confirmed")
+			else
+				failedRoundId = roundId
+				abilityCooldown = tick() + 1
+				readySent = false
+				status("V3 activation was rejected - waiting next sync round")
+			end
+		else
+			status("V3 countdown ended but account left its race door")
+		end
+		scheduledRoundId = ""
+		return fired
+	end)
+	return true
+end
+
+function handleV3CommandMessage(raw)
+	local command = normalizeV3Command(raw.payload or raw)
+	if not command then
+		command = normalizeV3Command(raw)
+	end
+	if not command then return false end
+	return scheduleV3SocketRound(command)
+end
+
+function tryActivateAbility()
+	if not V3_WS_SYNC or not isCurrentGroupInThisServer() then
+		return false
+	end
+	local ready = computeV3ReadyState()
+	if ready then
+		status("At race door - waiting Hub V3 countdown")
+	end
+	return ready == true
+end
+
+local TyrState = {
+	AttackLoaded = false,
+	Farming = true,
+	CurrentMode = "STARTING",
+	CurrentTarget = nil,
+	LastStatus = "",
+	TrackedBreakables = setmetatable({}, {
+		__mode = "k"
+	}),
+	CachedBreakables = {},
+	LastBreakableScan = 0
+}
+
+local TIKI_CENTER = CFrame.new(-16682.7, 215, 524.2)
+local TYRANT_ENTRANCE = CFrame.new(-16342.5, 174, 1397)
+local ARENA_CENTER = Vector3.new(-16335, 174, 1397)
+local DRAGON_TALON_BUY_POS = CFrame.new(5661.616211, 1211.299438, 865.999451)
+
+local TikiMobs = {
+	["Isle Outlaw"] = true,
+	["Island Boy"] = true,
+	["Sun-kissed Warrior"] = true,
+	["Isle Champion"] = true,
+	["Serpent Hunter"] = true,
+	["Skull Slayer"] = true
+}
+
+local TrainingIslandData = {
+	["Haunted Castle"] = {
+		Position = CFrame.new(-9530.61035, 200.860657, 5763.13477),
+		Mobs = {
+			["Reborn Skeleton"] = true,
+			["Living Zombie"] = true,
+			["Demonic Soul"] = true,
+			["Possessed Mummy"] = true
+		}
+	},
+	["Tiki Outpost"] = {
+		Position = CFrame.new(-16490.9727, 98.1144867, 1245.58984, -0.034969449, 0, 0.999388516, 0, 1, 0, -0.999388516, 0, -0.034969449),
+		Mobs = {
+			["Isle Outlaw"] = true,
+			["Island Boy"] = true,
+			["Sun-kissed Warrior"] = true,
+			["Isle Champion"] = true
+		}
+	},
+	["Great Tree"] = {
+		Positions = {
+			CFrame.new(2527.22119, 88.0126953, -7554.48096, -0.999390602, -0.0349089168, -1.05798244e-06, 1.05798244e-06, -6.05583191e-05, 1, -0.0349089168, 0.999390483, 6.05583191e-05),
+			CFrame.new(2923.90332, 91.6738281, -7734.71631, 0.997561574, -0, -0.0697919354, 0, 1, -0, 0.0697919354, 0, 0.997561574),
+			CFrame.new(3778.4248, 116.34375, -6938.81641, -0.667134643, -0.731317759, 0.141794443, -0.207926333, 2.65836716e-05, -0.978144467, 0.71533066, -0.682036817, -0.152077913)
+		},
+		Mobs = {
+			["Marine Commodore"] = true,
+			["Marine Rear Admiral"] = true
+		}
+	},
+	["Ice Cream Island"] = {
+		Position = CFrame.new(-851.74633789062, 65.819496154785, -10932.150390625),
+		Mobs = {
+			["Peanut Scout"] = true,
+			["Peanut President"] = true,
+			["Ice Cream Chef"] = true,
+			["Ice Cream Commander"] = true
+		}
+	},
+	["Port Town"] = {
+		Positions = {
+			CFrame.new(-172.031281, 52.8853912, 5851.12793, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627),
+			CFrame.new(-638.581543, 50.9266357, 5627.74951, 0.258864343, 0, 0.965913713, 0, 1, 0, -0.965913713, 0, 0.258864343),
+			CFrame.new(-61.3757935, 48.8545227, 6151.30762, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627),
+			CFrame.new(-662.967041, 65.9991913, 5804.41699, 0.965938151, 0.050586991, -0.253780305, -4.01213765e-06, 0.980709016, 0.195473209, 0.258773029, -0.188813999, 0.947304487)
+		},
+		Mobs = {
+			["Pirate Millionaire"] = true,
+			["Pistol Billionaire"] = true
+		}
+	},
+	["Peanut Island"] = {
+		Position = CFrame.new(-2087.0561523438, 11.722011566162, -10002.080078125),
+		Mobs = {
+			["Peanut Scout"] = true,
+			["Peanut President"] = true
+		}
+	}
+}
+
+local TrainingIslandOrder = getgenv().Config["Training Islands"] or {
+	"Tiki Outpost",
+	"Ice Cream Island",
+	"Haunted Castle",
+	"Great Tree",
+	"Port Town",
+	"Peanut Island"
+}
+
+local MAX_ACCS_PER_ISLAND = 2
+local myAssignedIsland = nil
+
+function assignTrainingIsland()
+	local bestIsland = nil
+	local bestCount = math.huge
+	for _, islandName in ipairs(TrainingIslandOrder) do
+		local count = TrainingIslandData[islandName] and countAccountsAtIsland(islandName) or math.huge
+		if count < MAX_ACCS_PER_ISLAND and count < bestCount then
+			bestCount = count
+			bestIsland = islandName
+		end
+	end
+	if not bestIsland then
+		for _, islandName in ipairs(TrainingIslandOrder) do
+			local count = TrainingIslandData[islandName] and countAccountsAtIsland(islandName) or math.huge
+			if count < bestCount then
+				bestCount = count
+				bestIsland = islandName
+			end
+		end
+	end
+	bestIsland = bestIsland or TrainingIslandOrder[1]
+	myAssignedIsland = bestIsland
+	return bestIsland
+end
+
+function countAccountsAtIsland(islandName)
+	local data = TrainingIslandData[islandName]
+	if not data then
+		return 0
+	end
+	local islandPos
+	if data.Positions then
+		islandPos = data.Positions[1].Position
+	else
+		islandPos = data.Position.Position
+	end
+	local count = 0
+	for _, plr in pairs(Players:GetPlayers()) do
+		if plr ~= Players.LocalPlayer and plr.Character then
+			local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+			if hrp and (hrp.Position - islandPos).Magnitude < 1000 then
+				count = count + 1
+			end
+		end
+	end
+	return count
+end
+
+function CheckMonster(...)
+	local args = {
+		...
+	}
+	local containers = {
+		workspace.Enemies,
+		ReplicatedStorage
+	}
+	for i = 1, #args do
+		local m = workspace.Enemies:FindFirstChild(args[i]) or ReplicatedStorage:FindFirstChild(args[i])
+		if m and m:IsA("Model") and m.Name ~= "Blank Buddy" then
+			local h = m:FindFirstChildWhichIsA("Humanoid")
+			local r = m:FindFirstChild("HumanoidRootPart")
+			if h and r and h.Health > 0 then
+				return m
+			end
+		end
+	end
+	for _, container in ipairs(containers) do
+		for _, m in ipairs(container:GetChildren()) do
+			local h = m:FindFirstChild("Humanoid")
+			local r = m:FindFirstChild("HumanoidRootPart")
+			if m:IsA("Model") and h and r and h.Health > 0 and m.Name ~= "Blank Buddy" then
+				for i = 1, #args do
+					if m.Name == args[i] or m.Name:lower():find(args[i]:lower()) then
+						return m
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+function forceReassignIsland()
+	myAssignedIsland = nil
+end
+
+function getTrainingIslandTarget(islandName)
+	local data = islandName and TrainingIslandData[islandName]
+	if not data then
+		return nil
+	end
+	if data.Positions and data.Positions[1] then
+		return data.Positions[1]
+	end
+	return data.Position
+end
+
+function setTrainingSpawnPoint(target)
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root or not target then return false end
+	local wasTweening = smoothTweenRunning
+	if wasTweening then module:stopTween() end
+	root.CFrame = target + Vector3.new(0, 6, 0)
+	task.wait(0.2)
+	local ok = pcall(function()
+		CommF_:InvokeServer("SetSpawnPoint")
+	end)
+	if wasTweening then task.wait(0.1) end
+	return ok
+end
+
+function resetTeleportToTrainingIsland(forceReset, requestedIsland)
+	local islandName = requestedIsland or assignTrainingIsland()
+	local target = getTrainingIslandTarget(islandName)
+	if not target then
+		status("No training island target for reset teleport")
+		return false
+	end
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not root or not humanoid or humanoid.Health <= 0 then
+		return false
+	end
+	module:stopTween()
+	status("Reset teleport to [" .. tostring(islandName) .. "]")
+	if forceReset or getgenv().Config["Reset Teleport After Trial"] ~= false then
+		-- Reset first, then place the new character at the training island. Setting
+		-- spawn before dying is unreliable because the server may restore the old
+		-- spawn during CharacterAdded.
+		setTrainingSpawnPoint(target)
+		local oldCharacter = character
+		pcall(function()
+			humanoid.Health = 0
+		end)
+		local deadline = tick() + 12
+		repeat
+			task.wait(0.15)
+			character = Players.LocalPlayer.Character
+		until tick() >= deadline or (character and character ~= oldCharacter
+			and character:FindFirstChild("HumanoidRootPart")
+			and character:FindFirstChildOfClass("Humanoid")
+			and character:FindFirstChildOfClass("Humanoid").Health > 0)
+		character = Players.LocalPlayer.Character
+		root = character and character:FindFirstChild("HumanoidRootPart")
+		if root then
+			local settleTime = math.max(0.2, tonumber(getgenv().Config["Reset Teleport Settle Time"]) or 0.45)
+			local holdUntil = tick() + settleTime
+			repeat
+				root.CFrame = target + Vector3.new(0, 6, 0)
+				RunService.Heartbeat:Wait()
+			until tick() >= holdUntil or not root.Parent
+			pcall(function()
+				CommF_:InvokeServer("SetSpawnPoint")
+			end)
+		end
+	end
+	character = Players.LocalPlayer.Character
+	root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root or (root.Position - target.Position).Magnitude > 900 then
+		status("Reset spawn missed - moving to training island")
+		if not topos(target) then return false end
+	end
+	setTrainingSpawnPoint(target)
+	return true
+end
+
+function beginPostTrialFarmTransition(reason)
+	if not isUper or not isMyUpgearTurn() or postTrialTransitionInProgress then
+		return false
+	end
+	if tick() - lastPostTrialTransitionAt < 8 then
+		return false
+	end
+	postTrialTransitionInProgress = true
+	lastPostTrialTransitionAt = tick()
+	isCurrentlyTraining = true
+	AttackConfig.AutoClickEnabled = false
+	_G.SHOULDSPAMSKILLS = false
+	releaseCurrentGroup(reason or "post_trial")
+	local ok, result = pcall(resetTeleportToTrainingIsland)
+	if not ok then
+		status("Reset teleport failed: " .. tostring(result):sub(1, 60))
+	end
+	invalidateV4Status()
+	AttackConfig.AutoClickEnabled = true
+	isCurrentlyTraining = false
+	postTrialTransitionInProgress = false
+	return ok and result == true
+end
+
+function getNearestTrialEnemy(trialLocation)
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local best, bestDistance = nil, math.huge
+	local folders = { workspace:FindFirstChild("Enemies") }
+	local origin = workspace:FindFirstChild("_WorldOrigin")
+	if origin then
+		folders[#folders + 1] = origin:FindFirstChild("Enemies")
+	end
+	for _, folder in ipairs(folders) do
+		if folder then
+			for _, enemy in ipairs(folder:GetChildren()) do
+				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+				local humanoid = enemy:FindFirstChildOfClass("Humanoid")
+				if enemyRoot and humanoid and humanoid.Health > 0
+					and (enemyRoot.Position - trialLocation.Position).Magnitude < 1800
+				then
+					local distance = root and (enemyRoot.Position - root.Position).Magnitude or 0
+					if distance < bestDistance then
+						best, bestDistance = enemy, distance
+					end
+				end
+			end
+		end
+	end
+	return best
+end
+
+local trialPartCache = {}
+local lastTrialPartSearchAt = {}
+
+function findTrialPart(race, trialLocation, preferredNames)
+	local cached = trialPartCache[race]
+	if cached and cached.Parent and cached:IsA("BasePart") then
+		return cached
+	end
+	if tick() - (lastTrialPartSearchAt[race] or 0) < 0.75 then
+		return nil
+	end
+	lastTrialPartSearchAt[race] = tick()
+	local wanted = {}
+	for _, name in ipairs(preferredNames) do
+		wanted[string.lower(name)] = true
+	end
+	local map = workspace:FindFirstChild("Map")
+	if not map then
+		return nil
+	end
+	local best, bestDistance = nil, math.huge
+	for _, item in ipairs(map:GetDescendants()) do
+		if item:IsA("BasePart") and wanted[string.lower(item.Name)] then
+			local distance = (item.Position - trialLocation.Position).Magnitude
+			if distance < 2500 and distance < bestDistance then
+				best, bestDistance = item, distance
+			end
+		end
+	end
+	trialPartCache[race] = best
+	return best
+end
+
+local trialAutomationBusy = false
+local trialRaceLock = nil
+local trialStartedAt = 0
+local trialCompletedHoldUntil = 0
+local trialAttemptCharacter = nil
+local trialFailureGeneration = 0
+local trialRetryPending = false
+local equipTrialCombatTool
+local TRIAL_BARRIER_TIMEOUT = math.max(60, tonumber(getgenv().Config["Trial Barrier Timeout"]) or 240)
+
+function runCurrentRaceTrial(race, trialLocation)
+	if tick() - lastTrialActionAt < 0.12 then
+		return true
+	end
+	lastTrialActionAt = tick()
+	race = canonicalRaceName(race)
+	_G.SHOULDSPAMSKILLS = false
+	status("Doing trial: " .. race)
+	if race == "Mink" then
+		local model = workspace.Map:FindFirstChild("MinkTrial")
+		local ceiling = model and model:FindFirstChild("Ceiling")
+		if not ceiling then
+			status("Trial of Speed - waiting MinkTrial.Ceiling")
+			return true
+		end
+		topos(ceiling.CFrame * CFrame.new(0, -20, 0))
+		return true
+	elseif race == "Skypiea" then
+		local model = workspace.Map:FindFirstChild("SkyTrial")
+		local course = model and model:FindFirstChild("Model")
+		local finish = course and course:FindFirstChild("FinishPart")
+		if not finish then
+			status("Trial of the King - waiting SkyTrial.Model.FinishPart")
+			return true
+		end
+		topos(finish.CFrame)
+		return true
+	elseif race == "Cyborg" then
+		local model = workspace.Map:FindFirstChild("CyborgTrial")
+		local floor = model and model:FindFirstChild("Floor")
+		if not floor then
+			status("Trial of the Machine - waiting CyborgTrial.Floor")
+			return true
+		end
+		topos(floor.CFrame * CFrame.new(0, 500, 0))
+		return true
+	elseif race == "Human" or race == "Ghoul" then
+		AttackConfig.AutoClickEnabled = true
+		for _, enemy in pairs(workspace.Enemies:GetChildren()) do
+			local root = enemy:FindFirstChild("HumanoidRootPart")
+			local humanoid = enemy:FindFirstChild("Humanoid")
+			if root and humanoid and humanoid.Health > 0
+				and getdis(root.CFrame, trialLocation.CFrame) < 1500
+			then
+				local attemptCharacter = Players.LocalPlayer.Character
+				repeat
+					task.wait()
+					module:eq()
+					module:haki()
+					root = enemy:FindFirstChild("HumanoidRootPart")
+					if root then
+						topos(root.CFrame * CFrame.new(0, 30, 0))
+					end
+					humanoid = enemy:FindFirstChild("Humanoid")
+				until Players.LocalPlayer.Character ~= attemptCharacter
+					or not attemptCharacter.Parent
+					or not attemptCharacter:FindFirstChildOfClass("Humanoid")
+					or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
+					or not enemy.Parent or not root or not humanoid or humanoid.Health <= 0
+			end
+		end
+		return true
+	elseif race == "Fishman" then
+		local seaBeasts = workspace:FindFirstChild("SeaBeasts")
+		if not seaBeasts then
+			status("Trial of Water - waiting SeaBeasts")
+			return true
+		end
+		_G.SHOULDSPAMSKILLS = false
+		_G.TRIAL_SKILL_TARGET = nil
+		local character = Players.LocalPlayer.Character
+		local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
+		local beast, bestDistance = nil, math.huge
+		for _, candidate in pairs(seaBeasts:GetChildren()) do
+			local candidateRoot = candidate:FindFirstChild("HumanoidRootPart")
+			local candidateHealth = candidate:FindFirstChild("Health")
+			if candidateRoot and candidateHealth and candidateHealth.Value > 0
+				and getdis(candidateRoot.CFrame, trialLocation.CFrame) < 1500
+			then
+				local distance = ownRoot and (ownRoot.Position - candidateRoot.Position).Magnitude or 0
+				if distance < bestDistance then
+					beast, bestDistance = candidate, distance
+				end
+			end
+		end
+		if not beast then
+			status("Trial of Water - waiting Sea Beast target")
+			return true
+		end
+
+		local root = beast:FindFirstChild("HumanoidRootPart")
+		local health = beast:FindFirstChild("Health")
+		if not root or not health or health.Value <= 0 then
+			return true
+		end
+		--  ng s t c nh SeaBeast, cao h n m t ch t, m t quay v o n :
+		--  ng th ng 500 stud ph a tr n l m m i skill ra ngo i t m.
+		local standHeight = math.max(10, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 25)
+		local standOffset = math.max(15, tonumber(getgenv().Config["Fish Trial Stand Offset"]) or 35)
+		local function getSeaBeastStandCFrame(targetRoot)
+			local beastPosition = targetRoot.Position
+			local selfCharacter = Players.LocalPlayer.Character
+			local selfRoot = selfCharacter and selfCharacter:FindFirstChild("HumanoidRootPart")
+			local direction = Vector3.new(0, 0, 1)
+			if selfRoot then
+				local flat = Vector3.new(
+					selfRoot.Position.X - beastPosition.X,
+					0,
+					selfRoot.Position.Z - beastPosition.Z
+				)
+				if flat.Magnitude > 1 then
+					direction = flat.Unit
+				end
+			end
+			local reach = math.max(targetRoot.Size.X, targetRoot.Size.Z) / 2
+			local position = beastPosition
+				+ direction * (reach + standOffset)
+				+ Vector3.new(0, standHeight, 0)
+			return safeLookAt(position, beastPosition)
+		end
+		status("Trial of Water - moving above Sea Beast")
+		local standCFrame = getSeaBeastStandCFrame(root)
+		topos(standCFrame)
+		character = Players.LocalPlayer.Character
+		ownRoot = character and character:FindFirstChild("HumanoidRootPart")
+		root = beast:FindFirstChild("HumanoidRootPart")
+		health = beast:FindFirstChild("Health")
+		standCFrame = root and getSeaBeastStandCFrame(root) or nil
+		if not ownRoot or not root or not standCFrame or not health or health.Value <= 0
+			or (ownRoot.Position - standCFrame.Position).Magnitude > 80
+		then
+			status("Trial of Water - retrying Sea Beast position")
+			return true
+		end
+
+		local tool = character:FindFirstChild("Sharkman Karate")
+			or Players.LocalPlayer.Backpack:FindFirstChild("Sharkman Karate")
+		if not tool then
+			CommF_:InvokeServer("BuySharkmanKarate")
+			tool = Players.LocalPlayer.Backpack:FindFirstChild("Sharkman Karate")
+		end
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if tool and tool.Parent == Players.LocalPlayer.Backpack and humanoid then
+			humanoid:EquipTool(tool)
+		end
+		equipTrialCombatTool()
+		_G.TRIAL_SKILL_TARGET = root
+		_G.SHOULDSPAMSKILLS = true
+		status("Trial of Water - locked Sea Beast, spamming skills")
+
+		local attemptCharacter = character
+		repeat
+			task.wait(0.05)  -- [FIX] poll nhanh hơn để bám theo SeaBeast
+			root = beast:FindFirstChild("HumanoidRootPart")
+			health = beast:FindFirstChild("Health")
+			ownRoot = attemptCharacter and attemptCharacter:FindFirstChild("HumanoidRootPart")
+			if root then
+				_G.TRIAL_SKILL_TARGET = root  -- update target liên tục
+				standCFrame = getSeaBeastStandCFrame(root)
+				-- [FIX] threshold 100   tween k p khi SeaBeast di chuy n
+				if ownRoot and (ownRoot.Position - standCFrame.Position).Magnitude > 100 then
+					topos(standCFrame)
+				end
+			end
+		until Players.LocalPlayer.Character ~= attemptCharacter
+			or not attemptCharacter.Parent
+			or not attemptCharacter:FindFirstChildOfClass("Humanoid")
+			or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
+			or not beast.Parent or not root or not health or health.Value <= 0
+		_G.SHOULDSPAMSKILLS = false
+		_G.TRIAL_SKILL_TARGET = nil
+		return true
+	end
+	return false
+end
+
+function getTrialTimerVisible()
+	local visible = false
+	pcall(function()
+		visible = Players.LocalPlayer.PlayerGui.Main.Timer.Visible == true
+	end)
+	if visible then
+		return true
+	end
+	-- Fallback for layout changes: any visible GuiObject named Timer inside
+	-- PlayerGui still means the Trial countdown is running.
+	pcall(function()
+		local timer = Players.LocalPlayer:FindFirstChild("PlayerGui")
+		timer = timer and timer:FindFirstChild("Timer", true)
+		visible = timer ~= nil and timer:IsA("GuiObject") and timer.Visible == true
+	end)
+	return visible
+end
+
+-- [FIX] equipTrialCombatTool:  u ti n Sword n u _G.USESWORD = true,
+-- fallback v  Melee.  m b o Fish trial spam skill  ng weapon.
+equipTrialCombatTool = function()
+	local character = Players.LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return false
+	end
+	local equipped = character:FindFirstChildOfClass("Tool")
+	-- N u   c m  ng lo i r i th  th i
+	if equipped then
+		if _G.USESWORD and equipped.ToolTip == "Sword" then return true end
+		if not _G.USESWORD and equipped.ToolTip == "Melee" then return true end
+	end
+	-- T m v  equip  ng weapon
+	local backpack = Players.LocalPlayer.Backpack
+	local wantTip = _G.USESWORD and "Sword" or "Melee"
+	local fallbackTip = _G.USESWORD and "Melee" or "Sword"
+	local found = nil
+	-- T m  u ti n
+	for _, tool in ipairs(backpack:GetChildren()) do
+		if tool:IsA("Tool") and tool.ToolTip == wantTip then
+			found = tool; break
+		end
+	end
+	-- Fallback n u kh ng t m th y  u ti n
+	if not found then
+		for _, tool in ipairs(backpack:GetChildren()) do
+			if tool:IsA("Tool") and tool.ToolTip == fallbackTip then
+				found = tool; break
+			end
+		end
+	end
+	if found then
+		pcall(function() humanoid:EquipTool(found) end)
+		task.wait(0.1)
+	else
+		module:eq()  -- fallback gọi module:eq() như cũ
+	end
+	equipped = character:FindFirstChildOfClass("Tool")
+	return equipped ~= nil and (equipped.ToolTip == "Melee" or equipped.ToolTip == "Sword")
+end
+
+local function resetFailedTrialAttempt(reason)
+	trialFailureGeneration = trialFailureGeneration + 1
+	trialAutomationBusy = false
+	trialRaceLock = nil
+	trialStartedAt = 0
+	trialCompletedHoldUntil = 0
+	trialAttemptCharacter = nil
+	trialRetryPending = true
+	lastTrialActionAt = 0
+	v3ReadySince = 0
+	abilityCooldown = 0
+	readySent = false
+	scheduledRoundId = ""
+	failedRoundId = ""
+	handledRoundId = ""
+	pairV3ActivatedAt = 0
+	pairTrialCycleStarted = false
+	lastTempleForceAt = 0
+	lastTempleProgressAt = 0
+	lastTempleDistance = math.huge
+	_G.SHOULDSPAMSKILLS = false
+	_G.TRIAL_SKILL_TARGET = nil
+	AttackConfig.AutoClickEnabled = true
+	pcall(function()
+		module:stopTween()
+	end)
+	resetTrialBarrierState()
+	status("Trial failed - returning to race door" .. (reason and (" (" .. reason .. ")") or ""))
+end
+
+function isNearOwnTrialArena()
+	local race, trialLocation = getOwnTrialLocation()
+	if not trialLocation then
+		return false, race, nil
+	end
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if trialCompletedHoldUntil > tick() then
+		local stillNear = root and (root.Position - trialLocation.Position).Magnitude < 1800
+		if stillNear and not getTrialTimerVisible() then
+			return false, trialRaceLock or race, trialLocation
+		end
+		trialCompletedHoldUntil = 0
+		if not stillNear then
+			trialRaceLock = nil
+			trialStartedAt = 0
+		end
+	end
+	local inside = root ~= nil and humanoid ~= nil and humanoid.Health > 0
+		and (root.Position - trialLocation.Position).Magnitude < 1800
+	if inside and trialRaceLock == nil then
+		trialRaceLock = race
+		trialStartedAt = tick()
+		trialAttemptCharacter = character
+		trialRetryPending = false
+	end
+	if inside and trialRaceLock and trialRaceLock ~= race then
+		-- Do not let a transient/stale Data.Race value switch a live Trial branch.
+		race = trialRaceLock
+		trialLocation = races_trial_place[race]
+	end
+	return inside, race, trialLocation
+end
+
+function markOwnTrialCompleted(reason)
+	trialCompletedHoldUntil = math.huge
+	trialRaceLock = nil
+	trialStartedAt = 0
+	trialTimerSeen = false
+	trialTimerLostAt = 0
+	_G.SHOULDSPAMSKILLS = false
+	_G.TRIAL_SKILL_TARGET = nil
+	pcall(function()
+		module:stopTween()
+	end)
+	if not trialCycleDone then
+		trialCycleDone = true
+		trialCycleDoneAt = tick()
+		groupTrialDoneAt[USERNAME] = tick()
+	end
+	status("Trial completed (" .. tostring(reason or "done") .. ") - waiting for group")
+end
+
+-- The old detector treated "12 seconds without a visible timer" as a win, so a
+-- single GUI read failure looked exactly like a finished Trial. Completion now
+-- follows the timer the Trial itself opens, leaving the arena, or the FFA start.
+function evaluateOwnTrialCompletion(insideArena)
+	if not trialRaceLock or trialStartedAt <= 0 then
+		return false
+	end
+	if isFFAActive() then
+		return true, "ffa_started"
+	end
+	if getTrialTimerVisible() then
+		trialTimerSeen = true
+		trialTimerLostAt = 0
+		return false
+	end
+	local elapsed = tick() - trialStartedAt
+	if trialTimerSeen then
+		if trialTimerLostAt == 0 then
+			trialTimerLostAt = tick()
+		elseif tick() - trialTimerLostAt >= 2 then
+			return true, "timer_ended"
+		end
+		return false
+	end
+	if not insideArena and elapsed > 8 then
+		return true, "left_arena"
+	end
+	if elapsed > 45 then
+		return true, "timeout"
+	end
+	return false
+end
+
+function tryRunOwnRaceTrial()
+	local inside, race, trialLocation = isNearOwnTrialArena()
+	local finished, finishReason = evaluateOwnTrialCompletion(inside)
+	if finished then
+		markOwnTrialCompleted(finishReason)
+		return false
+	end
+	if not inside then
+		return false
+	end
+	pairTrialCycleStarted = true
+	if trialAutomationBusy then
+		return true
+	end
+	local attemptGeneration = trialFailureGeneration
+	trialAutomationBusy = true
+	local ok, result = pcall(runCurrentRaceTrial, race, trialLocation)
+	trialAutomationBusy = false
+	if attemptGeneration ~= trialFailureGeneration then
+		return false
+	end
+	if not ok then
+		_G.SHOULDSPAMSKILLS = false
+		_G.TRIAL_SKILL_TARGET = nil
+		status("Trial automation error: " .. tostring(result):sub(1, 70))
+	end
+	return true
+end
+
+function isFFAActive()
+	local ok, transparency = pcall(function()
+		return workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency
+	end)
+	return ok and transparency == 0
+end
+
+function isPlayerInsideAnyTrialArena(plr)
+	local character = plr and plr.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	for _, location in pairs(races_trial_place) do
+		if location and (root.Position - location.Position).Magnitude < 1800 then
+			return true
+		end
+	end
+	return false
+end
+
+function isPlayerBackInTemple(plr)
+	local character = plr and plr.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	if (root.Position - TEMPLE_ENTRY_POSITION).Magnitude < 1500 then
+		return true
+	end
+	for _, pos in pairs(pos_plr_trial) do
+		if (root.Position - pos.Position).Magnitude < 150 then
+			return true
+		end
+	end
+	return false
+end
+
+-- A member counts as finished once it was seen inside a Trial arena (or the
+-- shared V3 round opened the doors) and is back inside the Temple again.
+function refreshGroupTrialProgress()
+	local roundStarted = pairTrialCycleStarted or pairV3ActivatedAt > 0 or handledRoundId ~= ""
+	local done, total = 0, 0
+	local members = currentGroupMembers()
+	for _, name in ipairs(members) do
+		total = total + 1
+		if name == USERNAME then
+			if trialCycleDone then
+				groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
+			end
+		else
+			local other = Players:FindFirstChild(name)
+			if other then
+				if isPlayerInsideAnyTrialArena(other) then
+					groupTrialSeenInsideAt[name] = tick()
+					groupTrialDoneAt[name] = nil
+				elseif (groupTrialSeenInsideAt[name] or roundStarted) and isPlayerBackInTemple(other) then
+					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
+				end
+			end
+		end
+		if groupTrialDoneAt[name] then
+			done = done + 1
+		end
+	end
+	return done, total
+end
+
+function isGroupTrialBarrierReached()
+	if isFFAActive() then
+		return true, "ffa_started"
+	end
+	-- Ki m tra n u c  b t k  ng i ch i n o trong server v n c n  ang   trong ph ng trial
+	local anyoneInsideArena = false
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= Player and isPlayerInsideAnyTrialArena(p) then
+			anyoneInsideArena = true
+			break
+		end
+	end
+	local done, total = refreshGroupTrialProgress()
+	if total > 0 and done >= total and not anyoneInsideArena then
+		return true, "all_members_done"
+	end
+	if trialCycleDone and not anyoneInsideArena and (total <= 1 or done >= total) then
+		return true, "all_arenas_cleared"
+	end
+	return false, tostring(done) .. "/" .. tostring(total)
+end
+
+-- Finished Trial -> wait inside the Temple -> once everybody finished, Helpers
+-- reset their character so the Main is the last one alive and takes the gear.
+function runTrialCompletionBarrier()
+	if not trialCycleDone then
+		return
+	end
+	local character = Players.LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root or not humanoid or humanoid.Health <= 0 then
+		return
+	end
+	if (root.Position - TEMPLE_ENTRY_POSITION).Magnitude > 3000 then
+		pcall(function()
+			CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POSITION)
+		end)
+	else
+		pcall(function()
+			module:stopTween()
+		end)
+	end
+
+	local reached, detail = isGroupTrialBarrierReached()
+	local isHelperRole = isAlly or (isUper and not isMyUpgearTurn())
+	if not reached then
+		if tick() - trialCycleDoneAt > TRIAL_BARRIER_TIMEOUT then
+			status("Trial barrier timeout - resetting cycle")
+			resetTrialBarrierState()
+			if isUper and isMyUpgearTurn() then
+				beginPostTrialFarmTransition("trial_barrier_timeout")
+			end
+			return
+		end
+		status("Trial done - waiting group " .. tostring(detail))
+		return
+	end
+
+	if isHelperRole then
+		if not helperSacrificeDone then
+			if trialBarrierSacrificeAt == 0 then
+				trialBarrierSacrificeAt = tick() + 1.5
+				status("Group finished - Helper resetting for Main")
+				return
+			end
+			if tick() < trialBarrierSacrificeAt then
+				return
+			end
+			helperSacrificeDone = true
+			trialBarrierSacrificeAt = 0
+			pcall(function()
+				character:BreakJoints()
+			end)
+			pcall(function()
+				humanoid.Health = 0
+			end)
+			pcall(function()
+				humanoid:ChangeState(Enum.HumanoidStateType.Dead)
+			end)
+			status("Helper reset - Main takes the gear")
+			return
+		end
+		if not isFFAActive() and tick() - trialCycleDoneAt > 20 then
+			resetTrialBarrierState()
+			status("Helper waiting next Trial cycle")
+		end
+		return
+	end
+
+	if isFFAActive() then
+		AttackConfig.AutoClickEnabled = true
+		local nearest, nearestDistance = nil, math.huge
+		for other in pairs(getplayers(true)) do
+			local otherRoot = other:FindFirstChild("HumanoidRootPart")
+			if otherRoot then
+				local distance = (otherRoot.Position - root.Position).Magnitude
+				if distance < nearestDistance then
+					nearest, nearestDistance = otherRoot, distance
+				end
+			end
+		end
+		if nearest then
+			status("FFA - Main clearing the arena")
+			pcall(function()
+				topos(nearest.CFrame * CFrame.new(0, 3, 0))
+			end)
+			return
+		end
+	end
+	status("Group finished - Main claiming gear")
+	if tick() - lastBarrierGearCheckAt >= 1.5 then
+		lastBarrierGearCheckAt = tick()
+		local claimed = false
+		pcall(function()
+			claimed = checkgear()
+		end)
+		if claimed then
+			beginPostTrialFarmTransition("gear_claimed")
+			return
+		end
+	end
+	local v4State = getV4Status(false)
+	if v4State and (v4State.needsTraining == true or v4State.needsPurchase == true) then
+		beginPostTrialFarmTransition("trial_completed")
+	end
+end
+
+-- Trial work must not share the pairing/training task. A blocking training cycle
+-- used to prevent every race handler below it from ever running after teleport.
+local trialWorkerToken = {}
+getgenv().__KAITUN_TRIAL_WORKER = trialWorkerToken
+task.spawn(function()
+	local nextGroupScanAt = 0
+	while getgenv().__KAITUN_TRIAL_WORKER == trialWorkerToken and task.wait(0.1) do
+		pcall(tryRunOwnRaceTrial)
+		-- Watch the other members while we fight: a member seen inside its arena
+		-- and later back in the Temple has finished its own Trial.
+		if tick() >= nextGroupScanAt then
+			nextGroupScanAt = tick() + 0.5
+			pcall(refreshGroupTrialProgress)
+		end
+	end
+end)
+
+task.spawn(function()
+	while getgenv().__KAITUN_TRIAL_WORKER == trialWorkerToken and task.wait(0.1) do
+		if trialRaceLock and trialAttemptCharacter and not trialCycleDone then
+			local currentCharacter = Players.LocalPlayer.Character
+			local humanoid = trialAttemptCharacter:FindFirstChildOfClass("Humanoid")
+			if not trialAttemptCharacter.Parent or not humanoid or humanoid.Health <= 0 then
+				resetFailedTrialAttempt("died")
+			elseif currentCharacter and currentCharacter ~= trialAttemptCharacter then
+				resetFailedTrialAttempt("respawned")
+			end
+		end
+	end
+end)
+
+function TyrTweenTo(targetCF, speed, keepNoclip)
+	return module:topos(targetCF, speed or getgenv().TyrantConfig.TweenSpeed, 0, true, keepNoclip == true)
+end
+
+function TyrGetEnemyFolders()
+	local folders = {}
+	local enemies = Workspace:FindFirstChild("Enemies")
+	if enemies then
+		folders[#folders + 1] = enemies
+	end
+	local origin = Workspace:FindFirstChild("_WorldOrigin")
+	if origin and origin:FindFirstChild("Enemies") then
+		folders[#folders + 1] = origin.Enemies
+	end
+	return folders
+end
+
+function TyrBaseEnemyName(name)
+	local clean = tostring(name or "")
+	clean = clean:gsub("%s*%[Lv%.%s*%d+%]", ""):gsub("%s*%[Lv%s*%d+%]", "")
+	clean = clean:gsub("%s*%[Boss%]", ""):gsub("%s*%[Raid Boss%]", "")
+	return clean:gsub("%s+$", "")
+end
+
+function TyrIsTikiMob(enemy)
+	return enemy and TikiMobs[TyrBaseEnemyName(enemy.Name)] == true
+end
+
+function TyrIsTyrant(enemy)
+	if not enemy then
+		return false
+	end
+	return string.find(string.lower(enemy.Name), "tyrant", 1, true) ~= nil
+end
+
+function TyrFindTyrant()
+	for _, folder in ipairs(TyrGetEnemyFolders()) do
+		for _, enemy in ipairs(folder:GetChildren()) do
+			local hum = enemy:FindFirstChildOfClass("Humanoid")
+			local root = enemy:FindFirstChild("HumanoidRootPart")
+			if hum and root and hum.Health > 0 and TyrIsTyrant(enemy) then
+				return enemy
+			end
+		end
+	end
+	return nil
+end
+
+function TyrGetNearestTikiMob()
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return nil
+	end
+	local nearest, nearestDist = nil, math.huge
+	for _, folder in ipairs(TyrGetEnemyFolders()) do
+		for _, enemy in ipairs(folder:GetChildren()) do
+			local hum = enemy:FindFirstChildOfClass("Humanoid")
+			local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+			if hum and enemyRoot and hum.Health > 0 and TyrIsTikiMob(enemy) then
+				local distance = (root.Position - enemyRoot.Position).Magnitude
+				if distance < nearestDist then
+					nearest = enemy;
+					nearestDist = distance
+				end
+			end
+		end
+	end
+	return nearest
+end
+
+function TyrFindTikiOutpost()
+	local map = Workspace:FindFirstChild("Map")
+	return map and map:FindFirstChild("TikiOutpost")
+end
+
+function TyrIsEyeActive(eye)
+	if not eye or not eye:IsA("BasePart") then
+		return false
+	end
+	local color = eye.Color
+	return eye.Transparency < 0.85 and color.R >= 0.75 and color.R > color.G * 1.35 and color.R > color.B * 1.20
+end
+
+-- Tra ve (ready, found). Eye1/Eye2 nam trong
+-- Workspace.Map.TikiOutpost.IslandModel, cach cho farm mob (TIKI_CENTER)
+-- gan 950 stud nen streaming thuong chua replicate chung. found=false nghia la
+-- "khong doc duoc mat", khac han "mat chua do".
+function TyrAreTyrantEyesReady()
+	local tiki = TyrFindTikiOutpost()
+	if not tiki then
+		return false, false
+	end
+	local islandModel = tiki:FindFirstChild("IslandModel")
+	if not islandModel then
+		return false, false
+	end
+	local eye1 = islandModel:FindFirstChild("Eye1", true)
+	local eye2 = islandModel:FindFirstChild("Eye2", true)
+	if not eye1 or not eye2 then
+		return false, false
+	end
+	return TyrIsEyeActive(eye1) and TyrIsEyeActive(eye2), true
+end
+
+function TyrGetObjectPart(object)
+	if not object or not object.Parent then
+		return nil
+	end
+	if object:IsA("BasePart") then
+		return object
+	end
+	if object:IsA("Model") then
+		return object.PrimaryPart or object:FindFirstChild("HumanoidRootPart")
+            or object:FindFirstChild("Head") or object:FindFirstChildWhichIsA("BasePart", true)
+	end
+	return object:FindFirstChildWhichIsA("BasePart", true)
+end
+
+function TyrIsNearArena(object, radius)
+	local part = TyrGetObjectPart(object)
+	return part and (part.Position - ARENA_CENTER).Magnitude <= (radius or 240)
+end
+
+function TyrHasBreakableName(object)
+	local name = string.lower(object.Name)
+	return string.find(name, "vase", 1, true) or string.find(name, "pot", 1, true)
+        or string.find(name, "jar", 1, true) or string.find(name, "urn", 1, true)
+        or string.find(name, "breakable", 1, true) or string.find(name, "destructible", 1, true)
+end
+
+function TyrHasBreakableData(object)
+	for _, attribute in ipairs({
+		"Health",
+		"HP",
+		"HitPoints",
+		"Breakable",
+		"Destructible"
+	}) do
+		if object:GetAttribute(attribute) ~= nil then
+			return true
+		end
+	end
+	local ok, tags = pcall(function()
+		return CollectionService:GetTags(object)
+	end)
+	if ok then
+		for _, tag in ipairs(tags) do
+			local lowerTag = string.lower(tag)
+			if string.find(lowerTag, "break", 1, true) or string.find(lowerTag, "destroy", 1, true)
+                or string.find(lowerTag, "vase", 1, true) or string.find(lowerTag, "pot", 1, true) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function TyrIsArenaBreakable(object)
+	if not object or not object.Parent or not TyrIsNearArena(object, 260) then
+		return false
+	end
+	local lowerName = string.lower(object.Name)
+	if lowerName == "tyrantentrance" or lowerName == "bossarena1" or lowerName == "bossarena2"
+        or lowerName == "eye1" or lowerName == "eye2" then
+		return false
+	end
+	return TyrHasBreakableName(object) or TyrHasBreakableData(object) or TyrState.TrackedBreakables[object] == true
+end
+
+function TyrGetArenaBreakables(forceRefresh)
+	if not forceRefresh and tick() - TyrState.LastBreakableScan < 0.45 then
+		local validCache = {}
+		for _, data in ipairs(TyrState.CachedBreakables) do
+			if data.Object and data.Object.Parent and data.Part and data.Part.Parent then
+				validCache[#validCache + 1] = data
+			end
+		end
+		TyrState.CachedBreakables = validCache
+		return TyrState.CachedBreakables
+	end
+	TyrState.LastBreakableScan = tick()
+	local results = {}
+	local added = {}
+	local function AddCandidate(object)
+		if object and not added[object] and TyrIsArenaBreakable(object) then
+			local part = TyrGetObjectPart(object)
+			if part then
+				added[object] = true;
+				results[#results + 1] = {
+					Object = object,
+					Part = part
+				}
+			end
+		end
+	end
+	for object in pairs(TyrState.TrackedBreakables) do
+		AddCandidate(object)
+	end
+	local tiki = TyrFindTikiOutpost()
+	if tiki then
+		for _, object in ipairs(tiki:GetDescendants()) do
+			if object:IsA("Model") or object:IsA("BasePart") then
+				AddCandidate(object)
+			end
+		end
+	end
+	local origin = Workspace:FindFirstChild("_WorldOrigin")
+	if origin then
+		for _, object in ipairs(origin:GetDescendants()) do
+			if object:IsA("Model") or object:IsA("BasePart") then
+				if TyrIsNearArena(object, 260) then
+					AddCandidate(object)
+				end
+			end
+		end
+	end
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if root then
+		table.sort(results, function(a, b)
+			return (a.Part.Position - root.Position).Magnitude < (b.Part.Position - root.Position).Magnitude
+		end)
+	end
+	TyrState.CachedBreakables = results
+	return TyrState.CachedBreakables
+end
+
+function TyrGetAttackTargets()
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	local targets = {}
+	if not root then
+		return targets
+	end
+	local config = getgenv().TyrantConfig
+	if TyrState.CurrentMode == "VASES" then
+		for _, data in ipairs(TyrGetArenaBreakables()) do
+			if data.Part and data.Part.Parent and (data.Part.Position - root.Position).Magnitude <= config.AttackDistance then
+				targets[#targets + 1] = {
+					data.Object,
+					data.Part
+				}
+			end
+		end
+		return targets
+	end
+	for _, folder in ipairs(TyrGetEnemyFolders()) do
+		for _, enemy in ipairs(folder:GetChildren()) do
+			local hum = enemy:FindFirstChildOfClass("Humanoid")
+			local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+			local head = enemy:FindFirstChild("Head")
+			local valid = false
+			if hum and enemyRoot and hum.Health > 0 then
+				if TyrState.CurrentMode == "BOSS" then
+					valid = enemy == TyrState.CurrentTarget or TyrIsTyrant(enemy)
+				elseif TyrState.CurrentMode == "MOBS" then
+					valid = TyrIsTikiMob(enemy)
+				end
+			end
+			if valid and (enemyRoot.Position - root.Position).Magnitude <= config.AttackDistance then
+				targets[#targets + 1] = {
+					enemy,
+					head or enemyRoot
+				}
+			end
+		end
+	end
+	return targets
+end
+
+function TyrLoadAttack()
+	if TyrState.AttackLoaded then
+		return
+	end
+	TyrState.AttackLoaded = true
+		local modules = ReplicatedStorage:WaitForChild("Modules", 5)
+	local net = modules and modules:WaitForChild("Net", 5)
+	local registerAttack = net and net:WaitForChild("RE/RegisterAttack", 5)
+	local registerHit = net and net:WaitForChild("RE/RegisterHit", 5)
+	local remoteAttack = nil
+	local remoteId = nil
+	local seed = nil
+	local lastAttack = 0
+	pcall(function()
+		if net then
+			seed = net:WaitForChild("seed", 3) and net.seed:InvokeServer()
+		end
+	end)
+	local function GetRemoteAttack()
+		if remoteAttack and remoteAttack.Parent and remoteId then
+			return true
+		end
+		remoteAttack = nil;
+		remoteId = nil
+		for _, folder in ipairs({
+			ReplicatedStorage:FindFirstChild("Util"),
+			ReplicatedStorage:FindFirstChild("Common"),
+			ReplicatedStorage:FindFirstChild("Remotes"),
+			ReplicatedStorage:FindFirstChild("Assets"),
+			ReplicatedStorage:FindFirstChild("FX")
+		}) do
+			if folder then
+				for _, object in ipairs(folder:GetChildren()) do
+					if object:IsA("RemoteEvent") and object:GetAttribute("Id") then
+						remoteAttack = object;
+						remoteId = object:GetAttribute("Id");
+						return true
+					end
+				end
+			end
+		end
+		return false
+	end
+	local function EncryptedRegisterHit(hitData)
+		if not seed and net then
+			pcall(function()
+				local seedRemote = net:WaitForChild("seed", 3)
+				if seedRemote then
+					seed = seedRemote:InvokeServer()
+				end
+			end)
+		end
+		if not GetRemoteAttack() or not seed then
+			return
+		end
+		pcall(function()
+			local encodedName = string.gsub("RE/RegisterHit", ".", function(character)
+				return string.char(bit32.bxor(string.byte(character), math.floor(Workspace:GetServerTimeNow() / 10 % 10) + 1))
+			end)
+			remoteAttack:FireServer(encodedName, bit32.bxor(remoteId + 909090, seed * 2), unpack(hitData))
+		end)
+	end
+	local function TyrFastAttack()
+		local char = LocalPlayer.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if not char or not hum or hum.Health <= 0 then
+			return
+		end
+		-- Khong goi TyrEnsureWeapon() o day: no co task.wait(0.15) ben trong,
+		-- chay trong vong lap 0.03s se lam nghen ca luong attack.
+		if not char:FindFirstChildWhichIsA("Tool") then
+			return
+		end
+		if tick() - lastAttack < getgenv().TyrantConfig.AttackDelay then
+			return
+		end
+		local targets = TyrGetAttackTargets()
+		if #targets == 0 then
+			return
+		end
+		local hitData = {
+			[1] = targets[1][2],
+			[2] = {},
+			[4] = "078da5141"
+		}
+		for _, target in ipairs(targets) do
+			hitData[2][#hitData[2] + 1] = {
+				target[1],
+				target[2]
+			}
+		end
+		pcall(function()
+			registerAttack:FireServer(0)
+		end)
+		pcall(function()
+			registerHit:FireServer(unpack(hitData))
+		end)
+		EncryptedRegisterHit(hitData)
+		lastAttack = tick()
+	end
+	getgenv().TyrantFastAttack = TyrFastAttack
+	task.spawn(function()
+		while task.wait(0.03) do
+			if TyrState.Farming then
+				pcall(TyrFastAttack)
+			end
+		end
+	end)
+end
+
+function TyrNormalAttack(duration)
+	local char = LocalPlayer.Character
+	if not char then
+		return
+	end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return
+	end
+	local started = tick()
+	repeat
+		local tool = hum and char:FindFirstChildWhichIsA("Tool")
+		if tool then
+			pcall(function()
+				if tool.Parent ~= char then
+					hum:EquipTool(tool)
+					task.wait(0.12)
+				end
+				tool:Activate()
+			end)
+		end
+		pcall(function()
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+		end)
+		if getgenv().TyrantFastAttack then
+			pcall(getgenv().TyrantFastAttack)
+		end
+		task.wait(0.06)
+	until tick() - started >= (duration or 0.6) or TyrFindTyrant()
+end
+
+function TyrBuyDragonTalon()
+	local char = LocalPlayer.Character
+	if char and (char:FindFirstChild("Dragon Talon") or char:FindFirstChild("DragonTalon")) then
+		return true
+	end
+	local bp = LocalPlayer:FindFirstChild("Backpack")
+	if bp and (bp:FindFirstChild("Dragon Talon") or bp:FindFirstChild("DragonTalon")) then
+		return true
+	end
+	if not getgenv().TyrantConfig.AutoBuyDragonTalon then
+		return false
+	end
+	local commf = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+	if not commf then
+		return false
+	end
+	status("Buying Dragon Talon")
+	TyrTweenTo(DRAGON_TALON_BUY_POS, getgenv().TyrantConfig.TweenSpeed)
+	task.wait(0.8)
+	for _ = 1, 15 do
+		pcall(function()
+			commf:InvokeServer("BuyDragonTalon")
+		end)
+		task.wait(0.5)
+		local c = LocalPlayer.Character
+		local b = LocalPlayer:FindFirstChild("Backpack")
+		if (c and (c:FindFirstChild("Dragon Talon") or c:FindFirstChild("DragonTalon")))
+            or (b and (b:FindFirstChild("Dragon Talon") or b:FindFirstChild("DragonTalon"))) then
+			return true
+		end
+	end
+	return false
+end
+
+function TyrNormalizeName(name)
+	return tostring(name or ""):gsub("%s+", ""):lower()
+end
+
+function TyrEnsureWeapon()
+	local char = LocalPlayer.Character
+	local bp = LocalPlayer:FindFirstChild("Backpack")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 then
+		return nil
+	end
+	local config = getgenv().TyrantConfig
+	local weaponName = config.Weapon or "Dragon Talon"
+
+	-- Helper: t m tool theo t n trong char ho c backpack
+	local function findTool(toolName)
+		if char then
+			for _, tool in ipairs(char:GetChildren()) do
+				if tool:IsA("Tool") and TyrNormalizeName(tool.Name) == TyrNormalizeName(toolName) then
+					return tool
+				end
+			end
+		end
+		if bp then
+			for _, tool in ipairs(bp:GetChildren()) do
+				if tool:IsA("Tool") and TyrNormalizeName(tool.Name) == TyrNormalizeName(toolName) then
+					return tool
+				end
+			end
+		end
+		return nil
+	end
+
+	-- T m weapon  c y u c u
+	local requested = findTool(weaponName)
+	if requested then
+		--   equip  ng weapon r i   kh ng c n equip l i
+		if requested.Parent == char then
+			return requested
+		end
+		-- Weapon  ang   backpack   equip l n
+		pcall(function() hum:EquipTool(requested) end)
+		task.wait(0.15)
+		local afterEquip = findTool(weaponName)
+		if afterEquip and afterEquip.Parent == char then
+			return afterEquip
+		end
+	end
+
+	-- Weapon kh ng c    th  mua Dragon Talon n u c n
+	if TyrNormalizeName(weaponName) == TyrNormalizeName("Dragon Talon") then
+		TyrBuyDragonTalon()
+		local afterBuy = findTool(weaponName)
+		if afterBuy and afterBuy.Parent ~= char then
+			pcall(function() hum:EquipTool(afterBuy) end)
+			task.wait(0.15)
+		end
+		return findTool(weaponName)
+	end
+
+	-- Fallback: t m Blox Fruit ho c Gun (KH NG fallback Melee/Sword   melee ch  d ng khi ph  vase)
+	local function findFallback()
+		local priority = {"Blox Fruit", "Gun"}
+		for _, containers in ipairs({char, bp}) do
+			if containers then
+				for _, tool in ipairs(containers:GetChildren()) do
+					if tool:IsA("Tool") then
+						local tt = tool.ToolTip or ""
+						for _, p in ipairs(priority) do
+							if tt == p then return tool end
+						end
+					end
+				end
+			end
+		end
+		return nil
+	end
+
+	local fallback = findFallback()
+	if fallback and fallback.Parent ~= char then
+		pcall(function() hum:EquipTool(fallback) end)
+		task.wait(0.15)
+	end
+	return char and char:FindFirstChildWhichIsA("Tool")
+end
+-- Keep the equip/skill sequence used by sexme.lua: resolve the melee by
+-- ToolTip, equip the Backpack instance, then fire the three melee skills.
+function TyrEquipMeleeFromBackpack()
+	local character = LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local backpack = LocalPlayer:FindFirstChild("Backpack")
+	if not humanoid or not backpack then return nil end
+	local equipped = character:FindFirstChildWhichIsA("Tool")
+	if equipped and equipped.ToolTip == "Melee" then return equipped end
+	local melee
+	for _, tool in ipairs(backpack:GetChildren()) do
+		if tool:IsA("Tool") and tool.ToolTip == "Melee" then
+			melee = tool
+			break
+		end
+	end
+	if not melee then return nil end
+	humanoid:EquipTool(melee)
+	local deadline = tick() + 0.8
+	repeat
+		task.wait(0.05)
+		equipped = character:FindFirstChild(melee.Name)
+	until tick() >= deadline or (equipped and equipped.Parent == character)
+	return equipped and equipped.Parent == character and equipped or nil
+end
+
+function TyrSpamMeleeSkills()
+	if not TyrEquipMeleeFromBackpack() then return false end
+	for _, key in ipairs({"Z", "X", "C"}) do
+		VirtualInputManager:SendKeyEvent(true, key, false, game)
+		VirtualInputManager:SendKeyEvent(false, key, false, game)
+		task.wait(0.08)
+	end
+	return true
+end
+
+function TyrFarmEnemy(enemy, isBoss)
+	local hum = enemy and enemy:FindFirstChildOfClass("Humanoid")
+	local enemyRoot = enemy and enemy:FindFirstChild("HumanoidRootPart")
+	if not hum or not enemyRoot or hum.Health <= 0 then
+		return
+	end
+	TyrState.CurrentTarget = enemy
+	TyrState.CurrentMode = isBoss and "BOSS" or "MOBS"
+	-- Tyrant farm khong dung aim lock cua trial; de sot lai se lam
+	-- trialAimLookCFrame ghi de rotation cua tween.
+	_G.SHOULDSPAMSKILLS = false
+	local config = getgenv().TyrantConfig
+	local height = isBoss and config.BossHeight or config.FarmHeight
+	-- Khi BringMobs bat, mob bi teleport xuong duoi chan moi 0.1s. Neu player
+	-- con orbit quanh mob thi hai ben keo nhau chay vong vo tan va luon lech
+	-- nhau 40 stud -> attack khong bao gio dung. Dung yen tai mot anchor.
+	local bringMobsAnchor = nil
+	if not isBoss and config.BringMobs then
+		bringMobsAnchor = CFrame.new(enemyRoot.Position + Vector3.new(0, height, 0))
+	end
+	local stuckAt = tick()
+	local previousHealth = hum.Health
+	while enemy.Parent and hum.Parent and enemyRoot.Parent and hum.Health > 0 do
+		local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		local playerHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if not root or not playerHum or playerHum.Health <= 0 then
+			break
+		end
+		-- TyrEnsureWeapon co the tween sang cho ban Dragon Talon va yield 0.15s;
+		-- goi moi vong 0.05s se keo nhan vat ra khoi mob. Chi goi khi thieu tool.
+		local selfCharacter = LocalPlayer.Character
+		if not (selfCharacter and selfCharacter:FindFirstChildWhichIsA("Tool")) then
+			TyrEnsureWeapon()
+		end
+		local target = bringMobsAnchor
+			or getExtractOrbitTarget(enemyRoot.CFrame, height)
+			or CFrame.new(enemyRoot.Position + Vector3.new(0, height, 0))
+		-- keepNoclip=true: giu noclip song giua cac tween, tranh giat nguoc
+		module:topos(target, config.TweenSpeed, 0, true, true)
+		if hum.Health < previousHealth then
+			previousHealth = hum.Health;
+			stuckAt = tick()
+		elseif tick() - stuckAt > 15 then
+			root.CFrame = target;
+			TyrNormalAttack(0.5);
+			stuckAt = tick()
+		end
+		task.wait(0.05)
+	end
+	-- D n noclip sau khi tho t loop farm
+	module:stopTween()
+	TyrState.CurrentTarget = nil
+end
+
+-- force=true: dap binh du chua doc duoc mat (bi streaming an), gioi han
+-- boi deadline de khong dinh mai o arena.
+function TyrBreakVases(force, deadline)
+	TyrState.CurrentMode = "VASES"
+	TyrState.CurrentTarget = nil
+	status(force and "Sweeping arena - breaking vases" or "Eyes red - breaking vases")
+	_G.SHOULDSPAMSKILLS = false
+	if not TyrTravelToArena() then
+		status("Tyrant entrance not reached - skip vase skills")
+		module:stopTween()
+		return
+	end
+	task.wait(0.5)
+	local round = 0
+	local function keepBreaking()
+		if TyrFindTyrant() then
+			return false
+		end
+		if force then
+			return not deadline or tick() < deadline
+		end
+		return (TyrAreTyrantEyesReady())
+	end
+	while keepBreaking() do
+		local breakables = TyrGetArenaBreakables()
+		if #breakables > 0 then
+			for _, data in ipairs(breakables) do
+				if TyrFindTyrant() then
+					_G.SHOULDSPAMSKILLS = false
+					module:stopTween()
+					return
+				end
+				if data.Part and data.Part.Parent then
+					local target = CFrame.new(data.Part.Position + Vector3.new(0, 6, 0), data.Part.Position)
+					TyrTweenTo(target, getgenv().TyrantConfig.TweenSpeed, true)
+					local character = LocalPlayer.Character
+					local root = character and character:FindFirstChild("HumanoidRootPart")
+					-- Tween co the bi ngat giua duong; thu lai mot lan truoc khi bo qua
+					-- thay vi im lang khong danh vao binh nao.
+					if root and data.Part.Parent and (root.Position - data.Part.Position).Magnitude > 35 then
+						TyrTweenTo(target, getgenv().TyrantConfig.TweenSpeed, true)
+						character = LocalPlayer.Character
+						root = character and character:FindFirstChild("HumanoidRootPart")
+					end
+					if root and data.Part.Parent and (root.Position - data.Part.Position).Magnitude <= 35 then
+						TyrSpamMeleeSkills()
+						TyrNormalAttack(0.55)
+					end
+				end
+			end
+		end
+		round = round + 1
+		local radius = 42
+		local points = 12
+		for index = 1, points do
+			if TyrFindTyrant() then
+				_G.SHOULDSPAMSKILLS = false
+				module:stopTween()
+				return
+			end
+			local angle = math.rad((index - 1) * (360 / points) + (round % 2) * 15)
+			local point = ARENA_CENTER + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+			TyrTweenTo(CFrame.new(point + Vector3.new(0, 7, 0), ARENA_CENTER), getgenv().TyrantConfig.TweenSpeed, true)
+			TyrNormalAttack(0.7)
+		end
+		TyrTweenTo(CFrame.new(ARENA_CENTER + Vector3.new(0, 8, 0)), getgenv().TyrantConfig.TweenSpeed, true)
+		TyrNormalAttack(1)
+		task.wait(0.8)
+	end
+	-- D n noclip khi tho t vase loop
+	_G.SHOULDSPAMSKILLS = false
+	module:stopTween()
+end
+
+function TyrTravelToArena()
+	for attempt = 1, 3 do
+		TyrTweenTo(TYRANT_ENTRANCE, getgenv().TyrantConfig.TweenSpeed, true)
+		local character = LocalPlayer.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if root and (root.Position - TYRANT_ENTRANCE.Position).Magnitude <= 180 then
+			return true
+		end
+		if attempt < 3 then
+			task.wait(0.4)
+		end
+	end
+	return false
+end
+
+-- Doi Eye1/Eye2 replicate sau khi den arena roi moi ket luan mat do hay chua.
+function TyrWaitForArenaEyes(timeout)
+	local deadline = tick() + (tonumber(timeout) or 5)
+	repeat
+		local ready, found = TyrAreTyrantEyesReady()
+		if found then
+			return ready, true
+		end
+		task.wait(0.25)
+	until tick() >= deadline
+	return false, false
+end
+
+-- Farm mob o TIKI_CENTER khong bao gio thay mat, nen dinh ky ve arena kiem tra.
+-- Neu mat do -> dap binh binh thuong; neu van khong doc duoc mat thi van dap
+-- binh trong VaseSweepDuration giay roi quay lai farm mob.
+function TyrSweepArenaForVases()
+	local config = getgenv().TyrantConfig
+	status("Checking Tyrant arena for vases")
+	if not TyrTravelToArena() then
+		return false
+	end
+	local ready, found = TyrWaitForArenaEyes(6)
+	if TyrFindTyrant() then
+		return true
+	end
+	if found then
+		if ready then
+			TyrBreakVases()
+			return true
+		end
+		-- Doc duoc mat va mat chua do -> Tyrant chua the spawn, dap binh vo ich.
+		status("Tyrant eyes not red - back to mobs")
+		return false
+	end
+	-- Khong doc duoc mat ke ca khi da dung trong arena: dap binh trong mot cua
+	-- so thoi gian gioi han thay vi bo qua han nhu truoc.
+	local duration = math.max(10, tonumber(config.VaseSweepDuration) or 60)
+	TyrBreakVases(true, tick() + duration)
+	return true
+end
+
+function TyrSetupRegenTracker()
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	local regen = remotes and remotes:FindFirstChild("RegenModel")
+	if not regen or not regen:IsA("RemoteEvent") then
+		return
+	end
+	regen.OnClientEvent:Connect(function(encoded)
+		local object = nil
+		if typeof(encoded) == "Instance" then
+			object = encoded
+		elseif type(_G.Encode) == "function" then
+			pcall(function()
+				object = _G.Encode(encoded)
+			end)
+		end
+		if object and typeof(object) == "Instance" and TyrIsNearArena(object, 280) then
+			TyrState.TrackedBreakables[object] = true
+		end
+	end)
+end
+
+function TyrSetupBringMobs()
+	if not getgenv().TyrantConfig.BringMobs then
+		return
+	end
+	local _bringMobsLastTick = 0
+	RunService.Heartbeat:Connect(function()
+		if TyrState.CurrentMode ~= "MOBS" then return end
+		local _now = tick()
+		if _now - _bringMobsLastTick < 0.1 then return end  -- throttle 10fps
+		_bringMobsLastTick = _now
+		local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if not root then
+			return
+		end
+		for _, folder in ipairs(TyrGetEnemyFolders()) do
+			for _, enemy in ipairs(folder:GetChildren()) do
+				local hum = enemy:FindFirstChildOfClass("Humanoid")
+				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+				if hum and enemyRoot and hum.Health > 0 and TyrIsTikiMob(enemy) then
+					local distance = (enemyRoot.Position - root.Position).Magnitude
+					if distance <= 300 then
+						pcall(function()
+							enemyRoot.CanCollide = false
+							enemyRoot.CFrame = CFrame.new(root.Position - Vector3.new(0, getgenv().TyrantConfig.FarmHeight, 0))
+							if hum:FindFirstChild("Animator") then
+								hum.Animator:Destroy()
+							end
+							sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+						end)
+					end
+				end
+			end
+		end
+	end)
+end
+
+local tyrantFarmingActive = false
+local tyrantFarmingTask = nil
+local tyrantSetupDone = false
+local tyrantFragmentTarget = 10000
+local tyrantSpawnBound = false
+local tyrantLastVaseSweep = 0
+
+local function vaseSweepInterval()
+	return math.max(30, tonumber(getgenv().TyrantConfig.VaseSweepInterval) or 120)
+end
+
+function TyrBindFarmSpawn()
+	if tyrantSpawnBound then return true end
+	local character = LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then return false end
+	if (root.Position - TIKI_CENTER.Position).Magnitude > 120 then return false end
+	tyrantSpawnBound = setTrainingSpawnPoint(TIKI_CENTER) == true
+	if tyrantSpawnBound then status("Tyrant farm spawn saved") end
+	return tyrantSpawnBound
+end
+
+function stopTyrantFarming()
+	tyrantFarmingActive = false
+	TyrState.Farming = false
+	_G.TYRANT_FARMING = false
+	TyrState.CurrentMode = "STARTING"
+	tyrantFarmingTask = nil
+end
+
+function startTyrantFarming(targetFragments)
+	tyrantFragmentTarget = math.max(0, tonumber(targetFragments) or tyrantFragmentTarget or 10000)
+	if tyrantFarmingTask then
+		return
+	end
+	if not tyrantSetupDone then
+		tyrantSetupDone = true
+		TyrSetupRegenTracker()
+		TyrSetupBringMobs()
+		TyrLoadAttack()
+		TyrBuyDragonTalon()
+		LocalPlayer.CharacterAdded:Connect(function()
+			tyrantSpawnBound = false
+		end)
+	end
+	tyrantFarmingActive = true
+	TyrState.Farming = true
+	_G.TYRANT_FARMING = true
+	tyrantFarmingTask = task.spawn(function()
+		while tyrantFarmingActive do
+			local v4State = getV4Status(false)
+			local frags = tonumber(LocalPlayer.Data.Fragments.Value) or 0
+			if v4State.canTrial or v4State.complete or frags >= tyrantFragmentTarget then
+				break
+			end
+			local config = getgenv().TyrantConfig
+			if config.AutoBuso then
+				local c = LocalPlayer.Character
+				if c and not c:FindFirstChild("HasBuso") then
+					pcall(function()
+						CommF_:InvokeServer("Buso")
+					end)
+				end
+			end
+			local playerHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+			if not playerHum or playerHum.Health <= 0 then
+				status("Respawning before fragment farm")
+				task.wait(1)
+			else
+				TyrBindFarmSpawn()
+				local moonSuffix = (isnight() and isfullmoon()) and " | Full Moon" or ""
+				local tyrant = TyrFindTyrant()
+				if tyrant then
+					status("Fighting Tyrant for V4 fragments" .. moonSuffix)
+					TyrFarmEnemy(tyrant, true)
+				elseif (TyrAreTyrantEyesReady()) then
+					status("Breaking vases for Tyrant" .. moonSuffix)
+					TyrBreakVases()
+					tyrantLastVaseSweep = tick()
+				elseif tick() - tyrantLastVaseSweep >= vaseSweepInterval() then
+					-- Eye1/Eye2 nam trong arena, cach cho farm mob ~950 stud nen
+					-- streaming an chung: khong bao gio thay mat do tu xa. Dinh ky
+					-- bay ve arena kiem tra va dap binh.
+					tyrantLastVaseSweep = tick()
+					TyrSweepArenaForVases()
+				else
+					TyrState.CurrentMode = "MOBS"
+					TyrState.CurrentTarget = nil
+					status("Farming V4 fragments " .. tostring(frags) .. "/" .. tostring(tyrantFragmentTarget) .. moonSuffix)
+					TyrEnsureWeapon()
+					local mob = TyrGetNearestTikiMob()
+					if mob then
+						TyrFarmEnemy(mob, false)
+					else
+						-- keepNoclip=true: gi  noclip s ng khi tween v  trung t m Tiki,
+						-- tr nh b  gravity k o xu ng ngay khi  n   gi t ng c v   i m xu t ph t
+						TyrTweenTo(TIKI_CENTER, config.TweenSpeed, true)
+						TyrBindFarmSpawn()
+						task.wait(0.8)
+					end
+				end
+			end
+		end
+		-- D n noclip khi tho t farming loop
+		module:stopTween()
+		tyrantFarmingTask = nil
+		tyrantFarmingActive = false
+		TyrState.Farming = false
+		_G.TYRANT_FARMING = false
+		TyrState.CurrentMode = "STARTING"
+		invalidateV4Status()
+	end)
+end
+
+function handleFragmentFarming(requiredFragments)
+	local farmConfig = getgenv().Config["Farm Fragments"]
+	if not farmConfig then
+		return false
+	end
+	local state = getV4Status(false)
+	if state.canTrial or state.complete then
+		if tyrantFarmingActive then
+			stopTyrantFarming()
+		end
+		return false
+	end
+	local target = math.max(0, tonumber(requiredFragments) or 10000)
+	local frags = tonumber(LocalPlayer.Data.Fragments.Value) or 0
+	if frags >= target then
+		if tyrantFarmingActive then
+			stopTyrantFarming()
+		end
+		return false
+	end
+	if type(farmConfig) == "table" and farmConfig.autotyrant then
+		startTyrantFarming(target)
+		return tyrantFarmingActive
+	end
+	return false
+end
+
+function buyPendingV4Upgrade(v4State, roleLabel)
+	if not v4State or not v4State.needsPurchase then
+		return false
+	end
+	roleLabel = tostring(roleLabel or "Account")
+	local fragments = tonumber(LocalPlayer.Data.Fragments.Value) or 0
+	local cost = tonumber(v4State.cost) or 0
+	if cost > 0 and fragments < cost then
+		if handleFragmentFarming(cost) then
+			return true
+		end
+		status(roleLabel .. " needs " .. tostring(cost - fragments) .. " more fragments for V4")
+		return true
+	end
+	if tyrantFarmingActive then
+		stopTyrantFarming()
+	end
+	status(roleLabel .. " buying V4 upgrade")
+	local ok, bought = pcall(function()
+		return invokeUpgradeRace("Buy")
+	end)
+	invalidateV4Status()
+	if ok and bought then
+		status(roleLabel .. " V4 upgrade purchased")
+	else
+		status(roleLabel .. " V4 purchase failed - retrying")
+	end
+	task.wait(0.6)
+	return true
+end
+function HopRandom()
+	task.spawn(function()
+		local serverBrowser = ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
+		if not serverBrowser then return end
+		for i = 1, 100 do
+			local success, servers = pcall(function()
+				return serverBrowser:InvokeServer(i)
+			end)
+			if success and type(servers) == "table" then
+				for i2, v in pairs(servers) do
+					if (v.Count or 0) >= 9 and i2 ~= game.JobId then
+						pcall(function()
+							serverBrowser:InvokeServer("teleport", i2)
+						end)
+						return
+					end
+				end
+			end
+		end
+	end)
+end
+
+function runRaceTrainingWork(trainingState, roleLabel)
+    roleLabel = tostring(roleLabel or "Account")
+    local character = Players.LocalPlayer.Character
+    if not character then
+        status(roleLabel .. " waiting character")
+        task.wait(1)
+        return false
+    end
+
+    local initialV4State = getV4Status(false)
+    if initialV4State.complete then
+        status(roleLabel .. " Race V4 completed")
+        return true
+    end
+    if initialV4State.canTrial and not isAlly then
+        -- Helper lu n canTrial=true (faked), n n skip check n y cho helper
+        status(roleLabel .. " training complete - ready for trial")
+        return true
+    end
+    if initialV4State.needsPurchase and not isAlly then
+        buyPendingV4Upgrade(initialV4State, roleLabel)
+        return false
+    end
+
+    if not character:FindFirstChild("RaceTransformed") then
+        status(roleLabel .. " " .. tostring(initialV4State.label))
+        talktoonggianaodo()
+        invalidateV4Status()
+        return false
+    end
+
+    if tyrantFarmingActive then stopTyrantFarming() end
+
+    -- Set flag:  ang training   block hop trong main loop
+    isCurrentlyTraining = true
+
+    local fullMoonTraining = isnight() and isfullmoon()
+    local remainingText = type(trainingState) == "number" and (" (" .. tostring(trainingState) .. " left)") or ""
+    status(roleLabel .. (fullMoonTraining and " Full Moon - training" or " training") .. remainingText)
+
+    local nextReadyCheck = 0
+    local cycleFinished = false
+    local function shouldStopTrainingCycle()
+        if cycleFinished then return true end
+		local trialCheckOk, insideTrial = pcall(function()
+			return isNearOwnTrialArena()
+		end)
+		if trialCheckOk and insideTrial then
+			cycleFinished = true
+			isCurrentlyTraining = false
+			status(roleLabel .. " entered Trial - stopping training")
+			return true
+		end
+        if tick() < nextReadyCheck then return false end
+        nextReadyCheck = tick() + 0.8
+
+        -- Helper: check RaceTransformed c n t n t i kh ng (=  ang train)
+        -- Kh ng d ng canTrial v  helper lu n canTrial=true (faked)
+        if isAlly then
+            local char = Players.LocalPlayer.Character
+            if not char or not char:FindFirstChild("RaceTransformed") then
+                cycleFinished = true
+                status(roleLabel .. " training session ended")
+                return true
+            end
+            return false
+        end
+
+        local state = getV4Status(true)
+        if state.canTrial then
+            cycleFinished = true
+            status(roleLabel .. " training complete - ready for trial")
+            return true
+        end
+        if state.complete then
+            cycleFinished = true
+            status(roleLabel .. " Race V4 completed")
+            return true
+        end
+        if state.needsPurchase then
+            cycleFinished = true
+            status(roleLabel .. " training complete - V4 upgrade available")
+            return true
+        end
+        return false
+    end
+
+    pcall(function()
+        local energy = Players.LocalPlayer.Character:FindFirstChild("RaceEnergy")
+        local transformed = Players.LocalPlayer.Character:FindFirstChild("RaceTransformed")
+        if energy and energy.Value >= 1 and transformed and not transformed.Value then
+            VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+            VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+        end
+    end)
+
+    -- L y island 1 l n, kh ng re-query trong su t cycle
+    local islandName = assignTrainingIsland()
+    if not islandName then
+        -- T t c  island b n ho c API l i   reset flag v  ch  v ng sau
+        status(roleLabel .. " no island available - retry next cycle")
+        isCurrentlyTraining = false
+        return false
+    end
+    local islandData = TrainingIslandData[islandName]
+    if not islandData then
+        status(roleLabel .. " unknown island: " .. tostring(islandName) .. " - retry")
+        forceReassignIsland()  -- xóa cache island sắt
+        isCurrentlyTraining = false
+        return false
+    end
+    local trainingPositions = nil
+    if islandData.Positions then
+        trainingPositions = islandData.Positions
+    elseif islandData.Position then
+        trainingPositions = { islandData.Position }
+    else
+        status("Island has no position data")
+        isCurrentlyTraining = false
+        return false
+    end
+
+    local currentPosIndex = 1
+    local function getCurrentPos()
+        return trainingPositions[currentPosIndex]
+    end
+
+    local function advancePosition()
+        currentPosIndex = currentPosIndex + 1
+        if currentPosIndex > #trainingPositions then currentPosIndex = 1 end
+    end
+
+    local trainingPosition = getCurrentPos()
+    if getdis(trainingPosition) >= 1500 then
+        status(roleLabel .. " moving to [" .. tostring(islandName) .. "] for training")
+        resetTeleportToTrainingIsland(true, islandName)
+        isCurrentlyTraining = false
+        return false
+    end
+	-- Refresh the server spawn even when we already started on the island.
+	setTrainingSpawnPoint(trainingPosition)
+
+    local mobNames = {}
+    for name in pairs(islandData.Mobs) do
+        table.insert(mobNames, name)
+    end
+
+    local ATTACK_RANGE = 15  -- khoảng cách đánh
+    local lastTweenAt  = 0   -- tránh tween quá thường xuyên
+
+    while not shouldStopTrainingCycle() do
+        local mob = CheckMonster(table.unpack(mobNames))
+        if not mob then
+            AttackConfig.AutoClickEnabled = true
+            status(roleLabel .. " [" .. tostring(islandName) .. "] waiting for mobs...")
+            topos(getCurrentPos())
+            task.wait(0.8)
+            advancePosition()
+        else
+            repeat
+                task.wait()
+                module:eq()
+                module:haki()
+                pcall(function()
+                    local currentCharacter = Players.LocalPlayer.Character
+                    local energy = currentCharacter and currentCharacter:FindFirstChild("RaceEnergy")
+					local transformed = currentCharacter and currentCharacter:FindFirstChild("RaceTransformed")
+                    -- Khi  ang bi n h nh V4   D NG  nh, bay l n cao ch  h t transform
+                    if transformed and transformed.Value then
+                        AttackConfig.AutoClickEnabled = false
+                        status(roleLabel .. " [" .. tostring(islandName) .. "] wait transform end")
+						topos(getExtractOrbitTarget(mob.HumanoidRootPart.CFrame, 150))
+                        return
+                    end
+                    AttackConfig.AutoClickEnabled = true
+                    status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
+                    -- Ch  tween khi xa mob V    qua 0.5s k  t  tween tr c
+                    -- Tr nh li n t c cancel tween m i frame   bay qua bay l i
+                    local hrp = mob:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local dist = getdis(hrp.CFrame)
+                        local nowT = tick()
+						if dist > ATTACK_RANGE or nowT - lastTweenAt > 0.4 then
+							lastTweenAt = nowT
+							topos(getExtractOrbitTarget(hrp.CFrame, 15))
+                        end
+                    end
+                    if energy and energy.Value >= 1 then
+                        VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+                        VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+                    end
+                end)
+            until not checkmob_(mob) or shouldStopTrainingCycle()
+        end
+    end
+
+    AttackConfig.AutoClickEnabled = true
+    invalidateV4Status()
+    forceReassignIsland()
+    isCurrentlyTraining = false
+    return cycleFinished
+end
+
+function runWaitingAccountWork()
+    local roleLabel = isUper and "Main" or "Help"
+    local fullMoonNow = isnight() and isfullmoon()
+    -- Lu n  c fresh: sau invalidateV4Status(), cache   clear   fetch m i t  server
+    local v4State = getV4Status(false)
+
+    -- FIX:  u ti n training/needsPurchase TR C canTrial
+    -- Tr nh cache stale (canTrial=true c ) ch n training loop
+    if v4State.needsTraining or v4State.needsPurchase then
+        if v4State.needsPurchase then
+            buyPendingV4Upgrade(v4State, roleLabel)
+            return
+        end
+        if tyrantFarmingActive then stopTyrantFarming() end
+        local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
+        local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
+        if trainingDone then invalidateV4Status() end
+        return
+    end
+
+    if v4State.canTrial then
+        if tyrantFarmingActive then stopTyrantFarming() end
+        if fullMoonNow then
+            status("Full Moon + trial-ready - waiting auto pair 1 Main + 2 Help")
+        else
+            status("Ready for trial - waiting Full Moon and auto pair")
+        end
+        return
+    end
+
+    if v4State.complete then
+        if tyrantFarmingActive then stopTyrantFarming() end
+        status("Race V4 completed - no more training needed")
+        return
+    end
+
+    if tyrantFarmingActive then stopTyrantFarming() end
+    local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
+    local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
+    if trainingDone then
+        invalidateV4Status()
+    end
+end
+
+
+task.spawn(function()
+	while task.wait(0.1) do
+		if not isUper and not isAlly then
+			status("Set Main or Help = true")
+			task.wait(2)
+			continue
+		end
+		if postTrialTransitionInProgress then
+			status("Post-Trial reset teleport in progress")
+			task.wait(0.2)
+			continue
+		end
+		if trialCycleDone then
+			pcall(runTrialCompletionBarrier)
+			task.wait(0.25)
+			continue
+		end
+		if trialCompletedHoldUntil == math.huge then
+			task.wait(0.2)
+			continue
+		end
+		if trialRetryPending then
+			local character = Players.LocalPlayer.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			if root and humanoid and humanoid.Health > 0 then
+				local atRaceDoor = forceMatchedAccountToTemple(true)
+				if atRaceDoor then
+					status("Trial retry - at race door, waiting V3 sync")
+					pcall(tryActivateAbility)
+				end
+			end
+			task.wait(0.2)
+			continue
+		end
+		-- The independent worker performs the trial; this branch only prevents
+		-- pairing/training movement from competing with it.
+		local trialCheckOk, insideActiveTrial = pcall(isNearOwnTrialArena)
+		if trialCheckOk and insideActiveTrial then
+			task.wait(0.1)
+			continue
+		end
+		--  
+		-- [FIX] V4 STATE   matchState.assigned (inline trong loop)
+		-- N u c n training/purchase th  T T paired mode ngay l p t c
+		--   script ch y v o runWaitingAccountWork()   farm mobs
+		--  
+		if matchState then
+			local v4s = nil
+			pcall(function() v4s = getV4Status(false) end)
+			local needsIndependentWork = v4s and (v4s.needsTraining or v4s.needsPurchase)
+			local mainFinishingTrial = isUper and isMyUpgearTurn()
+				and (pairTrialCycleStarted or pairV3ActivatedAt > 0 or handledRoundId ~= "")
+			if needsIndependentWork and not mainFinishingTrial then
+				matchState.assigned = false
+			end
+		end
+		if not matchState or not matchState.assigned then
+			local wok, werr = pcall(runWaitingAccountWork)
+			if not wok then
+				isCurrentlyTraining = false
+				status("⚠ training err: " .. tostring(werr):sub(1, 60))
+				task.wait(1)
+			end
+			task.wait(0.2)
+			continue
+		end
+		if matchState.main_job_id and matchState.main_job_id ~= game.JobId then
+			status("Joining matched Main server")
+			task.wait(1)
+			continue
+		end
+		local pairedV4State = getV4Status(false)
+		-- B  getV4Status(true): canTrial v  needsTraining kh ng x y ra  ng th i, call n y blocking g y gi t
+		local pairedReady = pairedV4State.canTrial == true and not pairedV4State.needsTraining
+		local pairedTrainingState = pairedV4State.remainingTraining or (pairedV4State.needsTraining and "training" or pairedV4State.key)
+		if isUper and isMyUpgearTurn() then
+			local trialOrTimerActive = isInsideOwnTrial()
+			local ffaStarted = false
+			pcall(function()
+				ffaStarted = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+			end)
+			if trialOrTimerActive or ffaStarted then
+				pairTrialCycleStarted = true
+			end
+		end
+		if not pairedReady then
+			pairTempleReadyAt = 0
+			lastTempleReadyCount = 0
+			local trialCycleConfirmed = pairTrialCycleStarted or pairV3ActivatedAt > 0 or handledRoundId ~= "" or isInsideOwnTrial()
+			local postTrialWorkAvailable = pairedV4State.needsTraining == true or pairedV4State.needsPurchase == true or pairedV4State.needsGearClaim == true
+			if PAIR_RELEASE_AFTER_TRIAL and isUper and isMyUpgearTurn() and trialCycleConfirmed and postTrialWorkAvailable then
+				pairTrialCycleStarted = true
+				status("Trial completed - claiming gear before farm")
+				pcall(checkgear)
+				task.wait(0.45)
+				beginPostTrialFarmTransition("trial_completed")
+				continue
+			end
+			if pairedV4State.complete then
+				if tyrantFarmingActive then
+					stopTyrantFarming()
+				end
+				status("Paired account has completed Race V4")
+				if isUper and isMyUpgearTurn() then
+					releaseCurrentGroup("race_v4_completed")
+				end
+				task.wait(1)
+			elseif pairedV4State.needsPurchase then
+				buyPendingV4Upgrade(pairedV4State, isUper and "Main" or "Help")
+				task.wait(0.2)
+			else
+				if tyrantFarmingActive then
+					stopTyrantFarming()
+				end
+				status("Paired but not trial-ready - continue training")
+				local tok, terr = pcall(runRaceTrainingWork, pairedTrainingState, isUper and "Main" or "Help")
+				if not tok then
+					isCurrentlyTraining = false
+					status("⚠ pair train err: " .. tostring(terr):sub(1, 50))
+				end
+			end
+			continue
+		end
+		local fullMoonNow = isnight() and isfullmoon()
+		if not fullMoonNow then
+			pairTempleReadyAt = 0
+			lastTempleReadyCount = 0
+			local freshV4 = getV4Status(false)  -- false: dùng cache 5s, tránh blocking RemoteFunction trong hot loop
+			if freshV4.needsTraining or freshV4.needsPurchase then
+				invalidateV4Status()
+				matchState.assigned = false
+				local wok, werr = pcall(runWaitingAccountWork)
+				if not wok then
+					isCurrentlyTraining = false
+					status("⚠ training err: " .. tostring(werr):sub(1, 60))
+				end
+				task.wait(0.2)
+				continue
+			end
+			local trialCycleConfirmed = pairTrialCycleStarted
+				or pairV3ActivatedAt > 0
+				or handledRoundId ~= ""
+				or isInsideOwnTrial()
+			if trialCycleConfirmed then
+				status("Trial already started - keeping pair until completion")
+			elseif isUper and isMyUpgearTurn() and pairAssignedAt > 0 and tick() - pairAssignedAt > 2 then
+				releaseCurrentGroup("full_moon_ended")
+			else
+				status("Full Moon ended - waiting leader to release pair")
+			end
+			task.wait(1)
+			continue
+		end
+		if tyrantFarmingActive then
+			stopTyrantFarming()
+		end
+		if pairAllInJobAt > 0 and pairTempleReadyAt <= 0 then
+			pairTempleReadyAt = tick()
+			lastTempleReadyCount = 0
+		end
+		forceMatchedAccountToTemple()
+		if isUper and isMyUpgearTurn() and pairTempleReadyAt > 0 then
+			local timeoutAnchor = math.max(pairTempleReadyAt, lastTempleProgressAt or 0)
+			if tick() - timeoutAnchor > PAIR_TEMPLE_TIMEOUT then
+				local readyCount = 0
+				pcall(function()
+					readyCount = select(1, readReadyFiles())
+				end)
+				if readyCount > lastTempleReadyCount then
+					lastTempleReadyCount = readyCount
+					pairTempleReadyAt = tick()
+				elseif readyCount < 3 and not isInsideOwnTrial() then
+					if PAIR_STICKY_UNTIL_TRIAL_COMPLETE then
+						pairTempleReadyAt = tick()
+						lastTempleProgressAt = tick()
+						lastTempleDistance = math.huge
+						readySent = false
+						status("Temple ready timeout - keeping pair until Trial completes")
+					else
+						releaseCurrentGroup("temple_ready_timeout")
+						task.wait(1)
+						continue
+					end
+				end
+			end
+		end
+		local doorCallOk, doorResult = pcall(function()
+			return CommF_:InvokeServer("CheckTempleDoor")
+		end)
+		local checktempledoor = doorCallOk and doorResult == true
+		if not checktempledoor then
+			status(doorCallOk and "Temple door is not available yet" or "CheckTempleDoor remote failed")
+			task.wait(0.5)
+		else
+			_G.ShouldSendData = true
+			if not workspace.Map:FindFirstChild("Temple of Time") then
+				local templeRef = ReplicatedStorage.MapStash:FindFirstChild("Temple of Time")
+				if templeRef then
+					templeRef.Parent = workspace.Map
+				end
+			elseif workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0 then
+				_G.SHOULDSPAMSKILLS = false
+				if isMain then
+					status("Killing players after trial...")
+					for plr, i in pairs(getplayers(true)) do
+						if plr then
+							repeat
+								task.wait()
+								pcall(function()
+									topos(plr.HumanoidRootPart.CFrame * CFrame.new((function()
+										local x, y, z = 0, 3, 0
+										x = math.random(1, 4);
+										z = math.random(1, 4)
+										if math.random(1, 2) == 1 then
+											x = x * -1
+										end
+										if math.random(1, 2) == 1 then
+											z = z * -1
+										end
+										return x, y, z
+									end)()))
+								end)
+							until not plr or not plr.Parent or not plr:FindFirstChild("Humanoid")
+                                or not plr:FindFirstChild("HumanoidRootPart") or plr.Humanoid.Health <= 0
+                                or workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 1
+						end
+					end
+                -- Main (isUper and isMyUpgearTurn()) KH NG BAO GI  t  reset
+                -- character trong l c trial  ang ch y, b t k  vai tr  c 
+                -- c a API tr  v   ng/sai. Ch  Help (Ally ho c Helper kh ng
+                -- ph i l t) m i reset   d n  ng cho Main.
+				elseif isUper and isMyUpgearTurn() then
+					status("Main is in trial - never auto-reset")
+				elseif (isAlly or (isUper and not isMyUpgearTurn())) and not helperSacrificeDone then
+					helperSacrificeDone = true
+					status("Helper yielding FFA once for Main")
+					local character = Players.LocalPlayer.Character
+					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+					if humanoid and humanoid.Health > 0 then
+						humanoid.Health = 0
+					end
+				elseif isAlly then
+					status("Helper FFA yield completed - waiting next Trial")
+				end
+			else
+				local myrace, race_trial_place = getOwnTrialLocation()
+				if race_trial_place and getdis(race_trial_place.CFrame) < 1500 then
+					pcall(runCurrentRaceTrial, myrace, race_trial_place)
+				else
+					if Players.LocalPlayer.PlayerGui.Main.Timer.Visible == false then
+						local khang = nil
+						local timeout = 0
+						repeat
+							task.wait();
+							khang = getdoor();
+							timeout = timeout + 1
+							if timeout > 300 then
+								break
+							end
+						until khang ~= nil
+						if khang and getdis(khang.CFrame) < 1500 then
+							topos(khang.CFrame)
+							status("At door - waiting")
+							if trialable() then
+								if isUper then
+									if isMyUpgearTurn() then
+										readySent = true
+										status("Ready trials")
+									else
+										readySent = false
+										status("waiting my turn")
+										task.wait(1)
+									end
+								elseif isAlly then
+									readySent = true
+									status("Helper ready")
+								end
+							else
+								if isUper and not isMyUpgearTurn() then
+									status("waiting turn")
+									task.wait(1)
+								end
+							end
+						else
+							CommF_:InvokeServer("requestEntrance", Vector3.new(28310.0234, 14895.1123, 109.456741))
+						end
+					end
+				end
+			end
+			if tryActivateAbility() then
+				task.wait(0.2)
+			end
+		end
+	end
+end)
+
+local fruits = {
+	["Buddha-Buddha"] = true,
+	["T-Rex-T-Rex"] = true,
+	["Dragon-Dragon"] = true,
+	["Yeti-Yeti"] = true,
+	["Leopard-Leopard"] = true,
+	["Venom-Venom"] = true,
+	["Phoenix-Phoenix"] = true,
+	["Kitsune-Kitsune"] = true,
+	["Mammoth-Mammoth"] = true,
+	["Gas-Gas"] = true,
+	["Portal-Portal"] = true
+}
+local isvalidtooltip = {
+	["Melee"] = true,
+	["Blox Fruit"] = true,
+	["Sword"] = true,
+	["Gun"] = true
+}
+local isvalidnameui = {
+	["Z"] = true,
+	["X"] = true,
+	["C"] = true,
+	["V"] = true,
+	["F"] = true
+}
+
+function getallweapon()
+	local weapon = {}
+	for i, v in pairs(Players.LocalPlayer.Backpack:GetChildren()) do
+		if v:IsA("Tool") and isvalidtooltip[v.ToolTip] then
+			table.insert(weapon, v)
+		end
+	end
+	for i, v in pairs(Players.LocalPlayer.Character:GetChildren()) do
+		if v:IsA("Tool") and isvalidtooltip[v.ToolTip] then
+			table.insert(weapon, v)
+		end
+	end
+	return weapon
+end
+
+function EquipTool(v)
+	local character = Players.LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return false end
+	local equipped = character:FindFirstChild(v)
+	if equipped and equipped:IsA("Tool") then return true end
+	local tool = Players.LocalPlayer.Backpack:FindFirstChild(v)
+	if not tool or not tool:IsA("Tool") then return false end
+	humanoid:EquipTool(tool)
+	task.wait(0.12)
+	return character:FindFirstChild(v) ~= nil
+end
+
+_G.SHOULDSPAMSKILLS = false
+
+local TRIAL_AIM_MAX_DISTANCE = 2000  -- SeaBeast trial range tăng lên để không bị tắt aim
+local TRIAL_AIM_PREDICT_TIME = 0.12
+local TRIAL_AIM_BIND_NAME = "KaitunTrialAim"
+
+local previousTrialAimConnection = getgenv().__KAITUN_TRIAL_AIM_CONNECTION
+if previousTrialAimConnection then
+	pcall(function()
+		previousTrialAimConnection:Disconnect()
+	end)
+	getgenv().__KAITUN_TRIAL_AIM_CONNECTION = nil
+end
+pcall(function()
+	RunService:UnbindFromRenderStep(TRIAL_AIM_BIND_NAME)
+end)
+
+-- Aim th ng tr c ti p v o t m Sea Beast (Head / Hitbox / HumanoidRootPart)
+-- Kh ng clamp bounding-box hay nh n velocity lead qu  m c khi n skill b  x t ra ngo i
+function getTrialAimPoint(target)
+	if not target or not target.Parent then
+		return nil
+	end
+	if target:IsA("Model") then
+		local head = target:FindFirstChild("Head") or target:FindFirstChild("Hitbox") or target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
+		if head and head:IsA("BasePart") then
+			return head.Position
+		end
+	end
+	if target:IsA("BasePart") then
+		local parent = target.Parent
+		if parent and parent:IsA("Model") then
+			local head = parent:FindFirstChild("Head") or parent:FindFirstChild("Hitbox")
+			if head and head:IsA("BasePart") then
+				return head.Position
+			end
+		end
+		return target.Position
+	end
+	return nil
+end
+
+function getTrialAimState()
+	if not _G.SHOULDSPAMSKILLS then
+		return nil
+	end
+	local target = _G.TRIAL_SKILL_TARGET
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local camera = workspace.CurrentCamera
+	if not target or not target.Parent or not target:IsA("BasePart")
+		or not root or not humanoid or humanoid.Health <= 0 or not camera
+		or (root.Position - target.Position).Magnitude > TRIAL_AIM_MAX_DISTANCE
+	then
+		return nil
+	end
+	local aimPoint = getTrialAimPoint(target)
+	if not aimPoint then
+		return nil
+	end
+	return aimPoint, camera, root
+end
+
+-- Camera priority + 1: the default camera script writes CurrentCamera.CFrame
+-- during RenderStepped, so the old plain RenderStepped lock was overwritten every
+-- frame and the skills fired wherever the free camera happened to point.
+RunService:BindToRenderStep(TRIAL_AIM_BIND_NAME, Enum.RenderPriority.Camera.Value + 1, function()
+	local aimPoint, camera, root = getTrialAimState()
+	if not aimPoint then
+		return
+	end
+	camera.CFrame = safeLookAt(camera.CFrame.Position, aimPoint)
+	-- Skills travel along the character look vector, so the body must point at
+	-- the beast in 3D: a flat rotation misses it completely from above.
+	if (aimPoint - root.Position).Magnitude > 1 then
+		root.CFrame = safeLookAt(root.Position, aimPoint)
+	end
+end)
+
+local function moveTrialMouseTo(x, y)
+	local insetX, insetY = 0, 0
+	pcall(function()
+		local inset = game:GetService("GuiService"):GetGuiInset()
+		insetX, insetY = inset.X, inset.Y
+	end)
+	if typeof(mousemoveabs) == "function" and pcall(mousemoveabs, x + insetX, y + insetY) then
+		return
+	end
+	pcall(function()
+		VirtualInputManager:SendMouseMoveEvent(x, y, game)
+	end)
+end
+
+-- Snap camera and cursor onto the Sea Beast right before each skill is fired.
+local function aimAtTrialSkillTarget()
+	local aimPoint, camera, root = getTrialAimState()
+	if not aimPoint or not camera then
+		return false
+	end
+	camera.CFrame = safeLookAt(camera.CFrame.Position, aimPoint)
+	if root and (aimPoint - root.Position).Magnitude > 0.5 then
+		root.CFrame = safeLookAt(root.Position, aimPoint)
+	end
+	local ok, screenPoint, onScreen = pcall(function()
+		return camera:WorldToViewportPoint(aimPoint)
+	end)
+	if ok and screenPoint and onScreen ~= false then
+		moveTrialMouseTo(screenPoint.X, screenPoint.Y)
+	else
+		moveTrialMouseTo(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+	end
+	return true
+end
+
+-- Skill spam loop: cycle Melee   Sword   Melee li n t c, kh ng ng i ch  cooldown
+-- M i v ng: equip Melee   spam h t skill s n   equip Sword   spam h t skill s n   l p l i
+task.spawn(function()
+	-- T m tool theo ToolTip trong character + backpack
+	local function findToolByTip(tip)
+		local char = Players.LocalPlayer.Character
+		local bp = Players.LocalPlayer.Backpack
+		if char then
+			for _, t in ipairs(char:GetChildren()) do
+				if t:IsA("Tool") and t.ToolTip == tip then return t end
+			end
+		end
+		if bp then
+			for _, t in ipairs(bp:GetChildren()) do
+				if t:IsA("Tool") and t.ToolTip == tip then return t end
+			end
+		end
+		return nil
+	end
+
+	-- Equip tool v   i n  v o character, tr  v  tool   equip ho c nil
+	local function equipTool(tool)
+		local char = Players.LocalPlayer.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if not hum or not tool then return nil end
+		if tool.Parent == char then return tool end
+		pcall(function() hum:EquipTool(tool) end)
+		local deadline = tick() + 0.4
+		repeat task.wait(0.03) until tick() >= deadline
+			or (char:FindFirstChild(tool.Name) ~= nil)
+		return char:FindFirstChild(tool.Name)
+	end
+
+	-- Spam t t c  skill c n s n c a tool  ang equip, tr  v  s  skill   fire
+	local function spamAllReadySkills(toolName)
+		local skillsGui = Players.LocalPlayer.PlayerGui:FindFirstChild("Main")
+			and Players.LocalPlayer.PlayerGui.Main:FindFirstChild("Skills")
+		local ui = skillsGui and skillsGui:FindFirstChild(toolName)
+		if not ui then return 0 end
+		local fired = 0
+		for _, vl in pairs(ui:GetChildren()) do
+			if not isvalidnameui[vl.Name] then continue end
+			local cdFrame = vl:FindFirstChild("Cooldown")
+			local titleFrame = vl:FindFirstChild("Title")
+			if not cdFrame or not titleFrame then continue end
+			local titleReady = titleFrame.TextColor3 == Color3.new(1, 1, 1)
+				or titleFrame.TextColor3 == Color3.fromRGB(255, 255, 255)
+			-- Cooldown bar = 0 size ngh a l  skill s n s ng
+			local cdReady = cdFrame.Size.X.Scale == 0 and cdFrame.Size.X.Offset == 0
+			if not (titleReady and cdReady) then continue end
+			aimAtTrialSkillTarget()
+			task.wait(0.02)
+			if vl.Name == "V" then
+				if not fruits[ui.Name] then
+					VirtualInputManager:SendKeyEvent(true, "V", false, game)
+					task.wait(0.05)
+					VirtualInputManager:SendKeyEvent(false, "V", false, game)
+					fired = fired + 1
+				end
+			else
+				VirtualInputManager:SendKeyEvent(true, vl.Name, false, game)
+				task.wait(0.05)
+				VirtualInputManager:SendKeyEvent(false, vl.Name, false, game)
+				fired = fired + 1
+			end
+			task.wait(0.03)
+		end
+		return fired
+	end
+
+	while task.wait(0.05) do
+		if not _G.SHOULDSPAMSKILLS then continue end
+		local char = Players.LocalPlayer.Character
+		if not char then continue end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health <= 0 then continue end
+
+		-- L y danh s ch weapon c n cycle: lu n Melee, th m Sword n u c 
+		local meleeT = findToolByTip("Melee")
+		local swordT = findToolByTip("Sword")
+
+		-- Cycle qua t ng weapon: Melee tr c, Sword sau
+		for _, weaponTip in ipairs({"Melee", "Sword"}) do
+			if not _G.SHOULDSPAMSKILLS then break end
+			local tool = weaponTip == "Melee" and meleeT or swordT
+			if not tool then continue end  -- không có weapon này thì bỏ qua
+
+			-- Equip weapon
+			local equipped = equipTool(tool)
+			if not equipped then continue end
+
+			-- Spam h t skill s n c a weapon n y
+			spamAllReadySkills(equipped.Name)
+		end
+	end
+end)
+
+local Ec = Players.LocalPlayer
+function Bc(x)
+	if not x then
+		return false
+	end
+	local L = x:FindFirstChild("Humanoid")
+	return L and L["Health"] > 0
+end
+function Pc(x, L)
+	local V = Players:GetPlayers()
+	local H = {}
+	local r = (x:GetPivot())["Position"]
+	local leader = Players:FindFirstChild(mainAccountName)
+	for _, a in ipairs(V) do
+		if a ~= Ec and a ~= leader and a["Character"] and noideaforname(a) then
+			local xp = a["Character"]:FindFirstChild("HumanoidRootPart")
+			if xp and Bc(a["Character"]) then
+				if (xp["Position"] - r)["Magnitude"] <= L then
+					table["insert"](H, a["Character"])
+				end
+			end
+		end
+	end
+	for _, a in ipairs(workspace["Enemies"]:GetChildren()) do
+		local xp = a:FindFirstChild("HumanoidRootPart")
+		if a ~= leader and xp and Bc(a) then
+			if (xp["Position"] - r)["Magnitude"] <= L then
+				table["insert"](H, a)
+			end
+		end
+	end
+	return H
+end
+--https://fi12.bot-hosting.cloud:20777/noguchi?name=
+function gettimeserver()
+	local ok, res = pcall(function()
+		return tonumber(game:HttpGet("http://fi12.bot-hosting.cloud:20777/timeserver"))
+	end)
+	if ok and type(res) == "number" then return res end
+	return os.time()
+end
+
+task.spawn(function()
+	while task.wait(1) do
+		if _G.ShouldSendData then
+			(http_request or http and http.request or request)({
+				Url = "https://baorph.x10.mx/data/apiv4.php?route=baor",
+				Method = "POST",
+				Headers = {
+					["Content-Type"] = "application/json"
+				},
+				Body = HttpService:JSONEncode({
+					username = Players.LocalPlayer.Name,
+					jobid = game.JobId
+				})
+			})
+		end
+	end
+end)
+
+
+function hopRandom()
+	local ok, ServerBrowser = pcall(function()
+		return ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
+	end)
+	if not ok or not ServerBrowser then return false end
+	for i = 1, 100 do
+		local ok2, servers = pcall(function()
+			return ServerBrowser:InvokeServer(i)
+		end)
+		if ok2 and servers then
+			for jobId, info in pairs(servers) do
+				if jobId ~= game.JobId and (info.Count or 0) < 12 then
+					pcall(function()
+						ServerBrowser:InvokeServer("teleport", jobId)
+					end)
+					task.wait(0.3)
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+_G[Players.LocalPlayer.Name] = true
+getgenv().UseSeaUi = true
+
+function createUI()
+	local ScreenGui = Instance.new("ScreenGui")
+	ScreenGui.Name = "NoNameHubUI"
+	ScreenGui.IgnoreGuiInset = true
+	ScreenGui.ResetOnSpawn = false
+	ScreenGui.Parent = safeGetGuiParent() or Player:WaitForChild("PlayerGui")
+	local Frame = Instance.new("Frame")
+	Frame.Size = UDim2.new(1, 0, 1, 0)
+	Frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	Frame.BackgroundTransparency = 0.3
+	Frame.Parent = ScreenGui
+	local Title = Instance.new("TextLabel")
+	Title.Size = UDim2.new(1, 0, 0.12, 0)
+	Title.Position = UDim2.new(0, 0, 0.10, 0)
+	Title.BackgroundTransparency = 1
+	Title.Text = "kaitunv4"
+	Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+	Title.TextScaled = true
+	Title.Font = Enum.Font.Arcade
+	Title.Parent = Frame
+	local Icon = Instance.new("ImageLabel")
+	Icon.Size = UDim2.new(0, 220, 0, 220)
+	Icon.Position = UDim2.new(0.5, -110, 0.12, 0)
+	Icon.BackgroundTransparency = 1
+	Icon.Image = "rbxassetid://"
+	Icon.Parent = Frame
+	local PlayerInfo = Instance.new("TextLabel")
+	PlayerInfo.Size = UDim2.new(1, 0, 0.055, 0)
+	PlayerInfo.Position = UDim2.new(0, 0, 0.49, 0)
+	PlayerInfo.BackgroundTransparency = 1
+	PlayerInfo.Text = "Player: Loading..."
+	PlayerInfo.TextColor3 = Color3.fromRGB(255, 255, 255)
+	PlayerInfo.TextScaled = true
+	PlayerInfo.Font = Enum.Font.Arcade
+	PlayerInfo.Parent = Frame
+	local FragmentInfo = Instance.new("TextLabel")
+	FragmentInfo.Size = UDim2.new(1, 0, 0.05, 0)
+	FragmentInfo.Position = UDim2.new(0, 0, 0.54, 0)
+	FragmentInfo.BackgroundTransparency = 1
+	FragmentInfo.Text = "Fragments: 0"
+	FragmentInfo.TextColor3 = Color3.fromRGB(255, 255, 255)
+	FragmentInfo.TextScaled = true
+	FragmentInfo.Font = Enum.Font.Arcade
+	FragmentInfo.Parent = Frame
+	local V4Info = Instance.new("TextLabel")
+	V4Info.Size = UDim2.new(0.94, 0, 0.07, 0)
+	V4Info.Position = UDim2.new(0.03, 0, 0.595, 0)
+	V4Info.BackgroundTransparency = 1
+	V4Info.Text = "V4: Checking..."
+	V4Info.TextColor3 = Color3.fromRGB(255, 220, 90)
+	V4Info.TextScaled = true
+	V4Info.TextWrapped = true
+	V4Info.Font = Enum.Font.Arcade
+	V4Info.Parent = Frame
+	local Status = Instance.new("TextLabel")
+	Status.Size = UDim2.new(0.94, 0, 0.075, 0)
+	Status.Position = UDim2.new(0.03, 0, 0.67, 0)
+	Status.BackgroundTransparency = 1
+	Status.Text = "Status: Loading..."
+	Status.TextColor3 = Color3.fromRGB(255, 255, 255)
+	Status.TextScaled = true
+	Status.TextWrapped = true
+	Status.Font = Enum.Font.Arcade
+	Status.Parent = Frame
+	local JobIdBox = Instance.new("TextBox")
+	JobIdBox.Size = UDim2.new(0.46, 0, 0.065, 0)
+	JobIdBox.Position = UDim2.new(0.27, 0, 0.78, 0)
+	JobIdBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	JobIdBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	JobIdBox.PlaceholderText = "Input Job ID"
+	JobIdBox.PlaceholderColor3 = Color3.fromRGB(170, 170, 170)
+	JobIdBox.Text = ""
+	JobIdBox.Font = Enum.Font.Arcade
+	JobIdBox.TextScaled = true
+	JobIdBox.ClearTextOnFocus = false
+	JobIdBox.Parent = Frame
+	local JoinButton = Instance.new("TextButton")
+	JoinButton.Size = UDim2.new(0.24, 0, 0.065, 0)
+	JoinButton.Position = UDim2.new(0.38, 0, 0.86, 0)
+	JoinButton.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
+	JoinButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	JoinButton.Text = "Join Job ID"
+	JoinButton.Font = Enum.Font.Arcade
+	JoinButton.TextScaled = true
+	JoinButton.Parent = Frame
+	return ScreenGui, Status, JobIdBox, JoinButton, PlayerInfo, FragmentInfo, V4Info
+end
+
+print("[v4] creating UI")
+local UI, StatusLabel, JobIdBox, JoinButton, PlayerInfoLabel, FragmentInfoLabel, V4InfoLabel = createUI()
+print("[v4] UI created - script fully loaded")
+
+function status(text)
+	currentTaskStatus = tostring(text or "idle")
+	if StatusLabel then
+		StatusLabel.Text = "Status: " .. currentTaskStatus
+	end
+end
+
+status("idle")
+
+function formatNumber(value)
+	local text = tostring(math.floor(tonumber(value) or 0))
+	while true do
+		local replaced, count = text:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+		text = replaced
+		if count == 0 then
+			break
+		end
+	end
+	return text
+end
+
+function formatV4Info(v4State)
+	v4State = v4State or {
+		label = "UNKNOWN",
+		energy = 0,
+		transformed = false
+	}
+	local energyPercent = math.floor(math.clamp(tonumber(v4State.energy) or 0, 0, 1) * 100 + 0.5)
+	local transformText = v4State.transformed and "ON" or "OFF"
+	local detail = ""
+	if v4State.needsPurchase then
+		detail = " | Cost: " .. formatNumber(v4State.cost) .. " F"
+	elseif v4State.code == 6 then
+		detail = " | Sessions: " .. tostring(v4State.completedTraining or 0) .. "/3"
+	elseif v4State.code == 8 then
+		detail = " | Remaining: " .. tostring(v4State.remainingTraining or 0)
+	elseif v4State.canTrial and v4State.gear ~= nil then
+		detail = " | Gear: " .. tostring(v4State.gear)
+	elseif v4State.code ~= nil then
+		detail = " | State: " .. tostring(v4State.code)
+	elseif v4State.progress ~= nil then
+		detail = " | Quest: " .. tostring(v4State.progress)
+	end
+	return "V4: " .. tostring(v4State.label or "UNKNOWN")
+        .. detail
+        .. " | Energy: " .. tostring(energyPercent) .. "%"
+        .. " | Transform: " .. transformText
+end
+
+function getV4StatusColor(v4State)
+	if v4State and v4State.complete then
+		return Color3.fromRGB(90, 220, 255)
+	end
+	if v4State and v4State.canTrial then
+		return Color3.fromRGB(90, 255, 130)
+	end
+	if v4State and v4State.needsPurchase then
+		return Color3.fromRGB(255, 170, 70)
+	end
+	if v4State and v4State.needsTraining then
+		return Color3.fromRGB(255, 220, 90)
+	end
+	return Color3.fromRGB(255, 255, 255)
+end
+
+task.spawn(function()
+	while task.wait(1) do
+		local fragments = 0
+		local race = "Unknown"
+		pcall(function()
+			fragments = Players.LocalPlayer.Data.Fragments.Value
+			race = Players.LocalPlayer.Data.Race.Value
+		end)
+		local roleText = isUper and "MAIN" or (isAlly and "HELP" or "NONE")
+		local pairText = matchState and matchState.assigned and "PAIRED" or "WAITING"
+		local moonText = (isnight() and isfullmoon()) and "FULL MOON" or "NO FULL MOON"
+		local v4State = getV4Status(false)
+		if PlayerInfoLabel then
+			PlayerInfoLabel.Text = "Player: " .. USERNAME .. " | Role: " .. roleText .. " | Race: " .. tostring(race)
+		end
+		if FragmentInfoLabel then
+			FragmentInfoLabel.Text = "Fragments: " .. formatNumber(fragments) .. " | Pair: " .. pairText .. " | " .. moonText
+		end
+		if V4InfoLabel then
+			V4InfoLabel.Text = formatV4Info(v4State)
+			V4InfoLabel.TextColor3 = getV4StatusColor(v4State)
+		end
+	end
+end)
+
+JoinButton.MouseButton1Click:Connect(function()
+	local raw = JobIdBox.Text:gsub("%s+", "")
+	if raw == "" then
+		status("Input empty");
+		return
+	end
+	status("Joining...")
+	local ok = pcall(function()
+		(ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)):InvokeServer("teleport", raw)
+	end)
+	if not ok then
+		status("Join failed")
+	else
+		status("Teleporting...")
+	end
+end)
+
+-- ============================================================
+-- FULL MOON API + CENTRAL HUB COORDINATOR
+-- Keep this block after the V4/trial helpers so background tasks can safely
+-- inspect the current farming state before accepting a teleport.
+-- ============================================================
+do
+	local coordinatorConfig = getgenv().Config or {}
+	local fullMoonApiUrl = tostring(coordinatorConfig["Full Moon API URL"] or "https://vortexz-hub.xyz/fullmoon")
+	local fullMoonPollInterval = math.max(10, tonumber(coordinatorConfig["Full Moon Poll Interval"]) or 15)
+	local fullMoonCycleSeconds = math.max(600, tonumber(coordinatorConfig["Full Moon Cycle Seconds"]) or 600)
+	local minimumFullMoonSeconds = math.max(120, tonumber(coordinatorConfig["Full Moon Minimum Remaining"]) or 120)
+	local fullMoonMaxPlayers = math.max(1, tonumber(coordinatorConfig["Full Moon Max Players"]) or 8)
+	local centralHubUrl = tostring(coordinatorConfig["Central Hub WebSocket"] or "ws://HOANGLAM_ISGAY:20425")
+	local heartbeatInterval = math.max(1, tonumber(coordinatorConfig["Central Hub Heartbeat Interval"]) or 3)
+	local localToolEnabled = coordinatorConfig["Local Tool Enabled"] ~= false
+	local localToolUrl = tostring(coordinatorConfig["Local Tool WebSocket"] or "ws://127.0.0.1:20425/client")
+	local localHeartbeatInterval = math.max(0.5, tonumber(coordinatorConfig["Local Tool Heartbeat Interval"]) or 1)
+	local requestFunc = http_request or (http and http.request) or request or (syn and syn.request)
+
+	local oldCoordinator = getgenv().__KAITUN_V4_COORDINATOR
+	if oldCoordinator and oldCoordinator.socket then
+		pcall(function()
+			local close = oldCoordinator.socket.Close or oldCoordinator.socket.close
+			if close then
+				close(oldCoordinator.socket)
+			end
+		end)
+	end
+	if oldCoordinator and oldCoordinator.localSocket then
+		pcall(function()
+			local close = oldCoordinator.localSocket.Close or oldCoordinator.localSocket.close
+			if close then
+				close(oldCoordinator.localSocket)
+			end
+		end)
+	end
+	if oldCoordinator and oldCoordinator.teleportFailureConnection then
+		pcall(function()
+			oldCoordinator.teleportFailureConnection:Disconnect()
+		end)
+	end
+
+	local coordinator = {
+		socket = nil,
+		localSocket = nil,
+		lastTeleportTick = -math.huge,
+		nextTeleportTick = 0,
+		pendingJobId = nil,
+		failedJobs = {},
+		startedAt = tick(),
+		requestInFlight = false,
+		nextCentralConnectTick = 0,
+		centralConnectBackoff = 3,
+		nextLocalConnectTick = 0,
+		localConnectBackoff = 2,
+		lastHopReason = "starting"
+	}
+	getgenv().__KAITUN_V4_COORDINATOR = coordinator
+
+	local function isCoordinatorActive()
+		return getgenv().__KAITUN_V4_COORDINATOR == coordinator
+	end
+
+	local function inTrial()
+		local ok, result = pcall(isInsideOwnTrial)
+		return ok and result == true
+	end
+
+	local function canInterruptForTeleport()
+		return not isCurrentlyTraining and not postTrialTransitionInProgress and not inTrial()
+	end
+
+	local function canAcceptHubTeleport()
+		if not canInterruptForTeleport() then
+			return false
+		end
+		if HelpWhitelist[LocalPlayer.Name] == true then
+			return true
+		end
+		local v4State = getV4Status(false)
+		return v4State ~= nil
+			and v4State.canTrial == true
+			and v4State.needsTraining ~= true
+			and v4State.needsPurchase ~= true
+			and v4State.complete ~= true
+	end
+
+	local function teleportToJob(targetPlaceId, targetJobId, source, force)
+		targetPlaceId = readPlaceId(targetPlaceId, game.PlaceId)
+		targetJobId = tostring(targetJobId or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if not targetPlaceId or targetJobId == "" or targetJobId == getCurrentJobId() then
+			coordinator.lastHopReason = "invalid_or_current_job"
+			return false
+		end
+		local now = tick()
+		if now < coordinator.nextTeleportTick or now - coordinator.lastTeleportTick < 12 then
+			coordinator.lastHopReason = "teleport_cooldown"
+			return false
+		end
+		if (coordinator.failedJobs[targetJobId] or 0) > now then
+			coordinator.lastHopReason = "job_quarantined"
+			return false
+		end
+		if not force and not canInterruptForTeleport() then
+			coordinator.lastHopReason = "training_or_trial_busy"
+			return false
+		end
+
+		coordinator.lastTeleportTick = now
+		coordinator.nextTeleportTick = now + 12
+		coordinator.pendingJobId = targetJobId
+		coordinator.lastHopReason = "teleporting_" .. tostring(source)
+		status("Teleporting via " .. tostring(source) .. "...")
+		local ok = pcall(function()
+			if targetPlaceId == tonumber(game.PlaceId) then
+				-- Th  __ServerBrowser tr c (trong c ng PlaceId), fallback sang TeleportService n u fail
+				local sbOk = pcall(function()
+					(ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)):InvokeServer("teleport", targetJobId)
+				end)
+				if not sbOk then
+					-- Fallback: d ng TeleportService tr c ti p
+					TeleportService:TeleportToPlaceInstance(targetPlaceId, targetJobId, LocalPlayer)
+				end
+			else
+				TeleportService:TeleportToPlaceInstance(targetPlaceId, targetJobId, LocalPlayer)
+			end
+		end)
+		if not ok then
+			coordinator.failedJobs[targetJobId] = now + 60  -- Giảm từ 120s → 60s để retry nhanh hơn
+			coordinator.nextTeleportTick = now + 20
+			coordinator.pendingJobId = nil
+			coordinator.lastHopReason = "teleport_call_failed"
+		end
+		return ok
+	end
+
+	local teleportFailureConnection = TeleportService.TeleportInitFailed:Connect(function(playerWhoFailed)
+		if playerWhoFailed ~= LocalPlayer or not isCoordinatorActive() then
+			return
+		end
+		local now = tick()
+		if coordinator.pendingJobId then
+			coordinator.failedJobs[coordinator.pendingJobId] = now + 60  -- Giảm từ 120s → 60s
+		end
+		coordinator.pendingJobId = nil
+		coordinator.nextTeleportTick = now + 20  -- Giảm từ 30s → 20s
+		coordinator.lastHopReason = "teleport_init_failed"
+		status("Teleport failed (Error 773?) - retrying another server in 20s")
+	end)
+	coordinator.teleportFailureConnection = teleportFailureConnection
+
+	local function getServerList(decoded)
+		if type(decoded) ~= "table" then
+			return nil
+		end
+		if #decoded > 0 then
+			return decoded
+		end
+		if type(decoded.data) == "table" then
+			return decoded.data
+		end
+		if type(decoded.servers) == "table" then
+			return decoded.servers
+		end
+		return nil
+	end
+
+	local function parseTimeOfDay(value)
+		local hour, minute, second = tostring(value or ""):match("^(%d%d?):(%d%d):(%d%d)")
+		hour, minute, second = tonumber(hour), tonumber(minute), tonumber(second)
+		if not hour or not minute or not second or hour > 23 or minute > 59 or second > 59 then
+			return nil
+		end
+		return hour + minute / 60 + second / 3600
+	end
+
+	local function getVerifiedClockTime(serverInfo)
+		local clockTime = tonumber(serverInfo.ClockTime or serverInfo.clockTime)
+		local parsedTime = parseTimeOfDay(serverInfo.TimeOfDay or serverInfo.timeOfDay)
+		if not clockTime then
+			return parsedTime
+		end
+		if parsedTime then
+			local difference = math.abs(clockTime - parsedTime)
+			difference = math.min(difference, 24 - difference)
+			if difference > 0.1 then
+				return nil
+			end
+		end
+		return clockTime % 24
+	end
+
+	local function getFullMoonSecondsRemaining(serverInfo)
+		local clockTime = getVerifiedClockTime(serverInfo)
+		if not clockTime or (clockTime >= 5 and clockTime < 18) then
+			return 0
+		end
+		local hoursRemaining = clockTime >= 18 and (24 - clockTime + 5) or (5 - clockTime)
+		local reportAge = math.max(0, tonumber(serverInfo.AgeSeconds or serverInfo.ageSeconds) or 0)
+		return hoursRemaining * (fullMoonCycleSeconds / 24) - reportAge
+	end
+
+	local function currentServerHasFullMoon()
+		local clockTime = tonumber(game.Lighting.ClockTime) or 12
+		return isfullmoon() and (clockTime >= 18 or clockTime < 5)
+	end
+
+	local function hopToFullMoonServer()
+		if coordinator.requestInFlight
+			or tick() - coordinator.startedAt < 15
+			or currentServerHasFullMoon()
+			or not canInterruptForTeleport()
+		then
+			coordinator.lastHopReason = currentServerHasFullMoon() and "current_server_full_moon" or "hop_gate_blocked"
+			return false
+		end
+
+		coordinator.requestInFlight = true
+		local ok, response = pcall(function()
+			if requestFunc then
+				return requestFunc({
+					Url = fullMoonApiUrl,
+					Method = "GET",
+					Timeout = 5,
+					Headers = { ["Accept"] = "application/json" }
+				})
+			end
+			return game:HttpGet(fullMoonApiUrl, true)
+		end)
+		coordinator.requestInFlight = false
+		if not ok or not response then
+			coordinator.lastHopReason = "api_request_failed"
+			return false
+		end
+
+		local body = type(response) == "string" and response or response.Body or response.body
+		local decodeOk, decoded = pcall(function()
+			return HttpService:JSONDecode(body)
+		end)
+		local servers = decodeOk and getServerList(decoded) or nil
+		if not servers then
+			coordinator.lastHopReason = "api_decode_or_schema_failed"
+			return false
+		end
+		if type(decoded) == "table" then
+			local generatedAt = tonumber(decoded.generated_at)
+			local freshFor = math.max(1, tonumber(decoded.fresh_for) or 180)
+			local nowUnix = DateTime.now().UnixTimestamp
+			if generatedAt and math.abs(nowUnix - generatedAt) > freshFor then
+				coordinator.lastHopReason = "api_stale"
+				return false
+			end
+		end
+		if currentServerHasFullMoon() then
+			coordinator.lastHopReason = "current_server_full_moon"
+			return false
+		end
+
+		local candidates = {}
+		for serverKey, serverInfo in pairs(servers) do
+			if type(serverInfo) == "table" then
+				local targetJobId = readJobId(serverInfo, type(serverKey) == "string" and serverKey or nil)
+				local targetPlaceId = tonumber(serverInfo.PlaceId or serverInfo.PlaceID or serverInfo.placeId or serverInfo.placeid)
+				local playerCount = tonumber(serverInfo.Players or serverInfo.PlayerCount or serverInfo.playerCount or serverInfo.players or serverInfo.Count or serverInfo.count) or math.huge
+				local secondsRemaining = getFullMoonSecondsRemaining({
+					ClockTime = serverInfo.ClockTime,
+					TimeOfDay = serverInfo.TimeOfDay,
+					-- AgeSeconds is the API response age; ServerAge is the Roblox
+					-- server lifetime and must not be subtracted from moon time.
+					AgeSeconds = serverInfo.AgeSeconds or serverInfo.ageSeconds or 0
+				})
+				if serverInfo.Online ~= false
+					and serverInfo.FullMoon == true
+					and serverInfo.FullMoonActive == true
+					and serverInfo.IsFull == false
+					and tonumber(serverInfo.Sea or serverInfo.sea) == 3
+					and playerCount <= fullMoonMaxPlayers
+					and secondsRemaining > minimumFullMoonSeconds
+					and targetJobId ~= getCurrentJobId()
+					and targetPlaceId ~= nil
+					and (coordinator.failedJobs[targetJobId] or 0) <= tick()
+				then
+					table.insert(candidates, {
+						jobId = targetJobId,
+						placeId = targetPlaceId,
+						players = playerCount,
+						secondsRemaining = secondsRemaining
+					})
+				end
+			end
+		end
+		table.sort(candidates, function(a, b)
+			if a.secondsRemaining == b.secondsRemaining then
+				return a.players < b.players
+			end
+			return a.secondsRemaining > b.secondsRemaining
+		end)
+		if candidates[1] then
+			coordinator.lastHopReason = "candidate_found"
+			return teleportToJob(candidates[1].placeId, candidates[1].jobId, "Full Moon API", false)
+		end
+		coordinator.lastHopReason = "no_eligible_candidate"
+		return false
+	end
+
+	local function getConfiguredHubRole()
+		if HelpWhitelist[LocalPlayer.Name] == true then
+			return "helper"
+		end
+		return "main"
+	end
+
+	local function getHubStatus(role, v4State)
+		if inTrial() then
+			return "IN_TRIAL"
+		end
+		local assignment = getgenv().__KAITUN_HUB_ASSIGNMENT
+		if type(assignment) == "table"
+			and tick() - (tonumber(assignment.receivedAt) or 0) < 900
+		then
+			return "MATCHED"
+		end
+		if role == "helper" then
+			if isCurrentlyTraining then return "TRAINING" end
+			local abilityName = race_abilities[canonicalRaceName(getLocalRaceName())]
+			return abilityName and checkbackpack(abilityName) ~= nil and "IDLE" or "BUSY"
+		end
+		if role ~= "main" or not v4State then
+			return "BUSY"
+		end
+		if v4State.complete == true then
+			return "MAX_V4"
+		end
+		if isCurrentlyTraining or v4State.needsTraining == true then
+			return "TRAINING"
+		end
+		if v4State.canTrial == true
+			and v4State.needsPurchase ~= true
+			and v4State.needsGearClaim ~= true
+		then
+			return currentServerHasFullMoon() and "WAITING_V4" or "SEARCHING_FULL_MOON"
+		end
+		if v4State.progress ~= nil or v4State.needsPurchase == true then
+			return "QUESTING"
+		end
+		return "BUSY"
+	end
+
+	local function applyHubAssignment(message)
+		local payload = type(message.payload) == "table" and message.payload or {}
+		local rawMembers = type(payload.members) == "table" and payload.members or {}
+		local memberNames = {}
+		local includesLocalPlayer = false
+		for _, member in ipairs(rawMembers) do
+			local memberName = type(member) == "table" and member.name or member
+			memberName = tostring(memberName or "")
+			if memberName ~= "" then
+				table.insert(memberNames, memberName)
+				if memberName == LocalPlayer.Name then
+					includesLocalPlayer = true
+				end
+			end
+		end
+		local leader = tostring(payload.leader or "")
+		local groupId = tostring(payload.groupId or "")
+		local targetJobId = readJobId(message.targetJobId or payload.targetJobId)
+		local targetPlaceId = readPlaceId(message.targetPlaceId or payload.targetPlaceId)
+		targetJobId = targetJobId or ""
+		if not includesLocalPlayer or #memberNames ~= 3 or leader == "" or groupId == ""
+			or targetJobId == "" or not targetPlaceId
+		then
+			return false
+		end
+
+		local previousGroupId = currentGroupId()
+		getgenv().__KAITUN_HUB_ASSIGNMENT = {
+			groupId = groupId,
+			leader = leader,
+			members = memberNames,
+			mode = tostring(payload.mode or ""),
+			targetJobId = targetJobId,
+			targetPlaceId = targetPlaceId,
+			receivedAt = tick()
+		}
+		local partners = {}
+		for _, memberName in ipairs(memberNames) do
+			if memberName ~= leader then
+				table.insert(partners, memberName)
+			end
+		end
+		matchState.assigned = true
+		matchState.group_id = groupId
+		matchState.main_username = leader
+		matchState.main_job_id = targetJobId
+		matchState.helpers = partners
+		matchState.all_in_job = targetJobId == getCurrentJobId()
+		mainJobId = targetJobId
+		if previousGroupId ~= groupId then
+			pairAssignedAt = tick()
+			pairTempleReadyAt = 0
+			lastTempleReadyCount = 0
+			lastTempleForceAt = 0
+			lastTempleProgressAt = 0
+			lastTempleDistance = math.huge
+			readySent = false
+		end
+		lastPairGroupId = groupId
+		pairAllInJobAt = matchState.all_in_job and tick() or 0
+		if getgenv().UpdateRoles then
+			pcall(getgenv().UpdateRoles)
+		end
+		if matchState.all_in_job then
+			scheduleMatchedTempleMove(groupId)
+		end
+		return true
+	end
+
+	local function sendHubSocketMessage(socket, message)
+		if not socket or type(message) ~= "table" then return false end
+		return pcall(function()
+			local send = socket.Send or socket.send
+			assert(type(send) == "function", "WebSocket send method is unavailable")
+			send(socket, HttpService:JSONEncode(message))
+		end)
+	end
+
+	local function clearHubAssignment(groupId, reason)
+		local assignment = getgenv().__KAITUN_HUB_ASSIGNMENT
+		if type(assignment) ~= "table" or tostring(assignment.groupId or "") ~= tostring(groupId or "") then
+			return false
+		end
+		getgenv().__KAITUN_HUB_ASSIGNMENT = nil
+		templeMoveGeneration = templeMoveGeneration + 1
+		matchState.assigned = false
+		matchState.group_id = ""
+		matchState.main_username = ""
+		matchState.main_job_id = game.JobId
+		matchState.helpers = {}
+		matchState.all_in_job = false
+		mainJobId = game.JobId
+		coordinator.lastHopReason = "hub_cancelled_" .. tostring(reason or "unknown")
+		if getgenv().UpdateRoles then
+			pcall(getgenv().UpdateRoles)
+		end
+		return true
+	end
+
+	local function getWebSocketConnect()
+		if WebSocket and type(WebSocket.connect) == "function" then
+			return WebSocket.connect
+		end
+		if websocket and type(websocket.connect) == "function" then
+			return websocket.connect
+		end
+		if syn and syn.websocket and type(syn.websocket.connect) == "function" then
+			return syn.websocket.connect
+		end
+		return nil
+	end
+
+	local function bindSocketEvent(socket, eventName, callback)
+		local event = socket[eventName]
+		if event and type(event.Connect) == "function" then
+			event:Connect(callback)
+			return true
+		end
+		return false
+	end
+
+	local function handleHubMessage(rawMessage, sourceSocket)
+		if type(rawMessage) == "table" then
+			rawMessage = rawMessage.Data or rawMessage.data
+		end
+		if type(rawMessage) ~= "string" then
+			return
+		end
+
+		local ok, message = pcall(function()
+			return HttpService:JSONDecode(rawMessage)
+		end)
+		if not ok or type(message) ~= "table" then
+			return
+		end
+		if message.type == "V3_COMMAND" then
+			if V3_WS_SYNC then handleV3CommandMessage(message) end
+			return
+		end
+		if message.type == "CANCEL_ASSIGNMENT" then
+			clearHubAssignment(message.groupId or message.group_id, message.reason)
+			return
+		end
+		if message.type ~= "TELEPORT_JOB" then return end
+		if not canAcceptHubTeleport() then
+			coordinator.lastHopReason = "ignored_stale_hub_assignment"
+			return
+		end
+
+		local targetJobId = readJobId(message.targetJobId)
+		local targetPlaceId = readPlaceId(message.targetPlaceId)
+		if not targetJobId and type(message.payload) == "table" then
+			targetJobId = readJobId(message.payload.targetJobId)
+		end
+		if not targetPlaceId and type(message.payload) == "table" then
+			targetPlaceId = readPlaceId(message.payload.targetPlaceId)
+		end
+		if applyHubAssignment(message) then
+			local payload = type(message.payload) == "table" and message.payload or {}
+			sendHubSocketMessage(sourceSocket or coordinator.socket, {
+				type = "ASSIGNMENT_ACK",
+				sender = LocalPlayer.Name,
+				groupId = tostring(payload.groupId or "")
+			})
+			teleportToJob(targetPlaceId, targetJobId, "Central Hub", false)
+		end
+	end
+
+	local function closeSocket(socket)
+		if not socket then
+			return
+		end
+		pcall(function()
+			local close = socket.Close or socket.close
+			if close then
+				close(socket)
+			end
+		end)
+	end
+
+	local function connectCentralHub()
+		local connect = getWebSocketConnect()
+		if not connect
+			or getConfiguredHubRole() == ""
+			or centralHubUrl:find("HOANGLAM_ISGAY", 1, true)
+		then
+			return nil
+		end
+		local ok, socket = pcall(connect, centralHubUrl)
+		if not ok or not socket then
+			coordinator.nextCentralConnectTick = tick() + coordinator.centralConnectBackoff
+			coordinator.centralConnectBackoff = math.min(coordinator.centralConnectBackoff * 2, 30)
+			return nil
+		end
+		coordinator.centralConnectBackoff = 3
+		coordinator.nextCentralConnectTick = 0
+
+		bindSocketEvent(socket, "OnMessage", function(message)
+			handleHubMessage(message, socket)
+		end)
+		bindSocketEvent(socket, "OnClose", function()
+			if coordinator.socket == socket then
+				coordinator.socket = nil
+				coordinator.nextCentralConnectTick = tick() + coordinator.centralConnectBackoff
+			end
+		end)
+		return socket
+	end
+
+	local function connectLocalTool()
+		local connect = getWebSocketConnect()
+		if not localToolEnabled or not connect or localToolUrl == "" then
+			return nil
+		end
+		local ok, socket = pcall(connect, localToolUrl)
+		if not ok or not socket then
+			coordinator.nextLocalConnectTick = tick() + coordinator.localConnectBackoff
+			coordinator.localConnectBackoff = math.min(coordinator.localConnectBackoff * 2, 30)
+			return nil
+		end
+		coordinator.localConnectBackoff = 2
+		coordinator.nextLocalConnectTick = 0
+		bindSocketEvent(socket, "OnClose", function()
+			if coordinator.localSocket == socket then
+				coordinator.localSocket = nil
+				coordinator.nextLocalConnectTick = tick() + coordinator.localConnectBackoff
+			end
+		end)
+		return socket
+	end
+
+	local function getFragmentCount()
+		local ok, value = pcall(function()
+			return LocalPlayer.Data.Fragments.Value
+		end)
+		return ok and (tonumber(value) or 0) or 0
+	end
+
+	task.spawn(function()
+		while isCoordinatorActive() do
+			if not coordinator.socket and tick() >= coordinator.nextCentralConnectTick then
+				coordinator.socket = connectCentralHub()
+			end
+
+			local socket = coordinator.socket
+			if socket then
+				local role = getConfiguredHubRole()
+				local v4State = getV4Status(false)
+				local hubStatus = getHubStatus(role, v4State)
+				local v3Fields = getV3HeartbeatFields()
+				local heartbeat = {
+					type = "HEARTBEAT",
+					sender = LocalPlayer.Name,
+					payload = {
+						race = getLocalRaceName(),
+						role = role,
+						status = hubStatus,
+						hopReason = coordinator.lastHopReason,
+						v3Ready = v3Fields.v3Ready,
+						v3Race = v3Fields.v3Race,
+						v3DoorDistance = v3Fields.v3DoorDistance,
+						v3GroupId = v3Fields.v3GroupId,
+						v3AbilityReady = v3Fields.v3AbilityReady
+					},
+					jobId = getCurrentJobId(),
+					placeId = game.PlaceId
+				}
+				local sent = pcall(function()
+					local send = socket.Send or socket.send
+					assert(type(send) == "function", "WebSocket send method is unavailable")
+					send(socket, HttpService:JSONEncode(heartbeat))
+				end)
+				if not sent then
+					closeSocket(socket)
+					coordinator.socket = nil
+					coordinator.nextCentralConnectTick = tick() + coordinator.centralConnectBackoff
+				end
+			end
+			task.wait(heartbeatInterval)
+		end
+	end)
+
+	task.spawn(function()
+		while isCoordinatorActive() do
+			if not coordinator.localSocket and tick() >= coordinator.nextLocalConnectTick then
+				coordinator.localSocket = connectLocalTool()
+			end
+
+			local socket = coordinator.localSocket
+			if socket then
+				local role = getConfiguredHubRole()
+				local v4State = getV4Status(false)
+				local heartbeat = {
+					type = "LOCAL_HEARTBEAT",
+					sender = LocalPlayer.Name,
+					sentAt = DateTime.now().UnixTimestampMillis,
+					payload = {
+						race = getLocalRaceName(),
+						role = role ~= "" and role or "unknown",
+						status = getHubStatus(role, v4State),
+						moon = isnight() and isfullmoon(),
+						canTrial = v4State.canTrial == true,
+						complete = v4State.complete == true,
+						fragments = getFragmentCount(),
+						task = tostring(currentTaskStatus or ""),
+						hopReason = coordinator.lastHopReason,
+						players = #Players:GetPlayers()
+					},
+					jobId = getCurrentJobId(),
+					placeId = game.PlaceId
+				}
+				local sent = pcall(function()
+					local send = socket.Send or socket.send
+					assert(type(send) == "function", "Local Tool WebSocket send method is unavailable")
+					send(socket, HttpService:JSONEncode(heartbeat))
+				end)
+				if not sent then
+					closeSocket(socket)
+					coordinator.localSocket = nil
+					coordinator.nextLocalConnectTick = tick() + coordinator.localConnectBackoff
+				end
+			end
+			task.wait(localHeartbeatInterval)
+		end
+	end)
+
+	task.spawn(function()
+		while isCoordinatorActive() do
+			local v4State = getV4Status(false)
+			local role = getConfiguredHubRole()
+			local hubStatus = getHubStatus(role, v4State)
+			if coordinator.socket ~= nil
+				and role == "main"
+				and hubStatus == "SEARCHING_FULL_MOON"
+				and v4State.canTrial == true
+				and v4State.complete ~= true
+				and not currentServerHasFullMoon()
+				and canInterruptForTeleport()
+			then
+				hopToFullMoonServer()
+			end
+			task.wait(fullMoonPollInterval)
+		end
+	end)
+end
