@@ -1145,6 +1145,15 @@ function getV4Status(forceRefresh)
 	code = tonumber(code)
 	progress = tonumber(progress)
 	cost = tonumber(cost) or 0
+	if cost <= 0 and code then
+		local fallbackCosts = {
+			[2] = 1000,
+			[4] = 2000,
+			[7] = 3250,
+			[9] = 4000,
+		}
+		cost = fallbackCosts[code] or 0
+	end
 	state.code = code
 	state.progress = progress
 	state.cost = cost
@@ -4908,17 +4917,10 @@ function RaidRefreshInventory()
 	for key in pairs(RaidFarming.Inventory) do
 		RaidFarming.Inventory[key] = nil
 	end
-	local okService, ItemReplicationService = pcall(function()
-		return require(game:GetService("ReplicatedStorage"):WaitForChild("ItemReplicationService", 3))
-	end)
-	local okKeys, ItemKeys = pcall(function()
-		return game:GetService("ReplicatedStorage")
-			:WaitForChild("ItemReplicationService", 3)
-			:WaitForChild("KEYS", 3)
-	end)
-	local okConfig, ItemConfig = pcall(function()
-		return require(game:GetService("ReplicatedStorage"):WaitForChild("ItemConfig", 3))
-	end)
+	local RS = game:GetService("ReplicatedStorage")
+	local okService, ItemReplicationService = pcall(require, RS:WaitForChild("ItemReplicationService", 3))
+	local okKeys, ItemKeys = pcall(require, RS:WaitForChild("ItemReplicationService", 3):WaitForChild("KEYS", 3))
+	local okConfig, ItemConfig = pcall(require, RS:WaitForChild("ItemConfig", 3))
 	if not okService or not okKeys or not okConfig or type(ItemReplicationService) ~= "table" then
 		return false
 	end
@@ -4975,11 +4977,13 @@ function RaidRefreshInventory()
 	for itemId, replicated in pairs(replicatedItems) do
 		local okMatch, itemData = pcall(function()
 			local matched = ItemConfig.match(itemId)
-			return matched and matched:unwrap()
+			if type(matched) == "table" and type(matched.unwrap) == "function" then
+				return matched:unwrap()
+			end
+			return matched
 		end)
 		if okMatch and itemData then
 			local indexData = itemData.Index or itemData
-			-- DebugLabel co dang "{StorageKey} [{IdType}-{ItemId}]"
 			local itemLabel = readField(indexData, "DebugLabel", "Name", "DisplayName", "InternalName")
 				or tostring(itemId)
 			local itemName = readField(indexData, "StorageKey")
@@ -5008,7 +5012,6 @@ function RaidRefreshInventory()
 				Data = itemData,
 			}
 			local existing = RaidFarming.Inventory[entry.Name]
-			-- Khong de Moveset phu mat item that
 			if not existing or (existing.IdType == "Moveset" and itemType ~= "Moveset") then
 				RaidFarming.Inventory[entry.Name] = entry
 			end
@@ -5023,25 +5026,22 @@ function RaidGetOwnedUnder1MFruits()
 	local ownedFruits = {}
 	local seen = {}
 
-	-- Helper tinh gia tri trai dua vao ten
-	local function resolveFruitValue(name, rawValue)
-		local val = tonumber(rawValue) or 0
-		if val > 0 then return val end
-		local fName = normalizeRaidFruitName(name)
-		return RAID_FRUIT_VALUES[fName] or 999999
-	end
-
-	-- Helper them trai vao danh sach
-	local function addFruit(rawName, rawPrice, count)
-		local cleanName = tostring(rawName or ""):gsub("^%s+", ""):gsub("%s+$", "")
-		if cleanName == "" then return end
-		local fName = normalizeRaidFruitName(cleanName)
-		if fName == "" then return end
-		local price = resolveFruitValue(fName, rawPrice)
-		if price < 1000000 and not seen[fName] then
-			seen[fName] = true
+	local function addFruit(internalName, displayName, rawPrice, count)
+		local cleanInternal = tostring(internalName or ""):gsub("%s*%b[]%s*$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if cleanInternal == "" then return end
+		local cleanDisplay = tostring(displayName or cleanInternal)
+		local fName = normalizeRaidFruitName(cleanDisplay)
+		if fName == "" then fName = normalizeRaidFruitName(cleanInternal) end
+		local price = tonumber(rawPrice) or 0
+		if price <= 0 then
+			price = RAID_FRUIT_VALUES[fName] or 999999
+		end
+		if price < 1000000 and not seen[cleanInternal] then
+			seen[cleanInternal] = true
 			table.insert(ownedFruits, {
-				Name = cleanName,
+				Name = cleanInternal,
+				InternalName = cleanInternal,
+				DisplayName = cleanDisplay,
 				CleanName = fName,
 				Value = price,
 				Count = tonumber(count) or 1
@@ -5049,26 +5049,59 @@ function RaidGetOwnedUnder1MFruits()
 		end
 	end
 
-	-- 1. Check server remote: getInventoryFruits
+	-- 1. Quet qua ReplicatedStorage ItemReplicationService (Chuan theo Blox Fruits)
 	pcall(function()
-		local res = CommF_:InvokeServer("getInventoryFruits")
-		if type(res) == "table" then
-			for k, item in pairs(res) do
-				if type(item) == "table" then
-					local name = item.Name or item.name or item.StorageKey or item.ItemName or item.DisplayName or tostring(k)
-					local price = item.Price or item.Value or item.price or item.value or 0
-					local count = item.Count or item.count or item.Quantity or 1
-					if (tonumber(count) or 1) > 0 then
-						addFruit(name, price, count)
+		local RS = game:GetService("ReplicatedStorage")
+		local okService, ItemReplicationService = pcall(require, RS:WaitForChild("ItemReplicationService", 3))
+		local okKeys, KEYS = pcall(require, RS:WaitForChild("ItemReplicationService", 3):WaitForChild("KEYS", 3))
+		local okConfig, ItemConfig = pcall(require, RS:WaitForChild("ItemConfig", 3))
+
+		if okService and okKeys and okConfig and type(ItemReplicationService) == "table" then
+			local qKey = (type(KEYS) == "table" and (KEYS.QUANTITY or KEYS.Count or KEYS.Amount)) or 1
+			local quantityItems = ItemReplicationService:GetItems(qKey)
+			if type(quantityItems) == "table" then
+				for key, item in pairs(quantityItems) do
+					local itemId = nil
+					local count = 0
+					if type(item) == "table" then
+						itemId = tonumber(item.ItemId or item.ItemID or item.Id)
+						count = tonumber(item.Value or item.Count or item.Quantity or item.Amount) or 0
+					else
+						itemId = tonumber(key)
+						count = tonumber(item) or 0
 					end
-				elseif type(item) == "string" and item ~= "" then
-					addFruit(item, 0, 1)
+
+					if itemId and count > 0 then
+						local okMatch, matched = pcall(function()
+							local res = ItemConfig.match(itemId)
+							if type(res) == "table" and type(res.unwrap) == "function" then
+								return res:unwrap()
+							end
+							return res
+						end)
+						if okMatch and type(matched) == "table" then
+							local index = matched.Index
+							local label = nil
+							if type(index) == "table" then
+								label = index.DebugLabel or index.DisplayName or index.Name or matched.Name
+							else
+								label = matched.DebugLabel or matched.DisplayName or matched.Name
+							end
+							label = tostring(label or "")
+							local cleanName = label:gsub("%s*%b[]%s*$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+							local canonical = normalizeRaidFruitName(cleanName)
+							local val = tonumber(RAID_FRUIT_VALUES[canonical]) or 0
+							if val > 0 or cleanName:find("-") or cleanName:lower():find("fruit") then
+								addFruit(cleanName, canonical, val, count)
+							end
+						end
+					end
 				end
 			end
 		end
 	end)
 
-	-- 2. Check server remote: getInventory
+	-- 2. Quet qua Server Remote: getInventory
 	pcall(function()
 		local res = CommF_:InvokeServer("getInventory")
 		if type(res) == "table" then
@@ -5083,35 +5116,14 @@ function RaidGetOwnedUnder1MFruits()
 						or name:find("-", 1, true) ~= nil
 						or RAID_FRUIT_VALUES[fName] ~= nil
 					if looksLikeFruit and count > 0 then
-						addFruit(name, item.Value or item.Price or 0, count)
+						addFruit(name, fName, item.Value or item.Price or RAID_FRUIT_VALUES[fName] or 0, count)
 					end
 				end
 			end
 		end
 	end)
 
-	-- 3. Check client ItemReplicationService
-	pcall(function()
-		RaidRefreshInventory()
-		for _, item in pairs(RaidFarming.Inventory) do
-			if type(item) == "table" then
-				local count = tonumber(item.Count) or tonumber(item.Quantity) or 0
-				local name = tostring(item.Name or item.Label or "")
-				local idType = tostring(item.IdType or item.Type or "")
-				local owned = item.Owned == true or count > 0
-				local fName = normalizeRaidFruitName(name)
-				local looksLikeFruit = idType:lower():find("fruit", 1, true) ~= nil
-					or name:lower():find("fruit", 1, true) ~= nil
-					or name:find("-", 1, true) ~= nil
-					or RAID_FRUIT_VALUES[fName] ~= nil
-				if owned and looksLikeFruit then
-					addFruit(name, item.Value, math.max(1, count))
-				end
-			end
-		end
-	end)
-
-	-- 4. Check UI Inventory Storage trong PlayerGui neu co
+	-- 3. Quet truc tiep PlayerGui neu cac phuong phap tren bi block
 	if #ownedFruits == 0 then
 		pcall(function()
 			local pgui = LocalPlayer:FindFirstChild("PlayerGui")
@@ -5124,8 +5136,9 @@ function RaidGetOwnedUnder1MFruits()
 						local countLabel = frame:FindFirstChild("ItemCount") or frame:FindFirstChild("Count")
 						if title and title:IsA("TextLabel") and title.Text ~= "" then
 							local count = countLabel and tonumber(tostring(countLabel.Text):match("%d+")) or 1
-							if count > 0 then
-								addFruit(title.Text, 0, count)
+							local fName = normalizeRaidFruitName(title.Text)
+							if RAID_FRUIT_VALUES[fName] then
+								addFruit(title.Text, fName, RAID_FRUIT_VALUES[fName], count)
 							end
 						end
 					end
@@ -5219,10 +5232,11 @@ function RaidLoadFruitForChip()
 						local isFruit = tip:find("fruit", 1, true) ~= nil
 							or toolName:find("fruit", 1, true) ~= nil
 							or tool:FindFirstChild("Fruit") ~= nil
+							or RAID_FRUIT_VALUES[normalizeRaidFruitName(tool.Name)] ~= nil
 						if isFruit then
 							if tool.Parent ~= character and humanoid then
 								pcall(function() humanoid:EquipTool(tool) end)
-								task.wait(0.2)
+								task.wait(0.3)
 							end
 							return tool
 						end
@@ -5244,40 +5258,47 @@ function RaidLoadFruitForChip()
 		return false
 	end
 
-	-- 3. Lay trai re nhat va unstore
+	-- 3. Lay tung trai re nhat thu unstore
 	for _, fruit in ipairs(ownedFruits) do
-		local rawName = fruit.Name
-		local loadName = RaidCleanLoadName(rawName)
-		local cleanFruitName = RaidCleanLoadName(fruit.CleanName or normalizeRaidFruitName(rawName))
-		local candidates = { rawName, loadName }
-		local left, right = loadName:match("^(.-)%-(.-)$")
-		if left and right and left:gsub("%s", "") == right:gsub("%s", "") then
-			table.insert(candidates, left .. " Fruit")
-			table.insert(candidates, left)
-		elseif not loadName:find("Fruit") then
-			table.insert(candidates, loadName .. " Fruit")
-		end
-		if cleanFruitName ~= "" then
-			table.insert(candidates, cleanFruitName)
-			table.insert(candidates, cleanFruitName .. " Fruit")
-			table.insert(candidates, cleanFruitName .. "-" .. cleanFruitName)
+		local rawName = tostring(fruit.InternalName or fruit.Name or "")
+		local cleanName = RaidCleanLoadName(rawName)
+		local candidates = {}
+		local function addCandidate(c)
+			c = tostring(c or ""):gsub("^%s+", ""):gsub("%s+$", "")
+			if c ~= "" and not table.find(candidates, c) then
+				table.insert(candidates, c)
+			end
 		end
 
-		local tried = {}
+		addCandidate(rawName)
+		addCandidate(cleanName)
+		if fruit.DisplayName and fruit.DisplayName ~= "" then
+			local title = fruit.DisplayName:gsub("^%l", string.upper)
+			addCandidate(title)
+			addCandidate(title .. " Fruit")
+			addCandidate(title .. "-" .. title)
+		end
+		local left, right = cleanName:match("^(.-)%-(.-)$")
+		if left and right and left:gsub("%s", "") == right:gsub("%s", "") then
+			addCandidate(left .. " Fruit")
+			addCandidate(left)
+		end
+
 		for _, candidateName in ipairs(candidates) do
-			candidateName = tostring(candidateName or ""):gsub("^%s+", ""):gsub("%s+$", "")
-			if candidateName ~= "" and not tried[candidateName] then
-				tried[candidateName] = true
-				status("Unstoring owned [" .. candidateName .. "] (" .. formatNumber(fruit.Value) .. " Beli)")
-				pcall(function()
-					CommF_:InvokeServer("LoadFruit", candidateName)
-				end)
-				task.wait(0.5)
+			status("Unstoring fruit [" .. candidateName .. "] (" .. formatNumber(fruit.Value) .. " Beli)")
+			pcall(function()
+				CommF_:InvokeServer("LoadFruit", candidateName)
+			end)
+			local started = tick()
+			repeat
 				held = getAndEquipHeldFruit()
-				if held then
-					status("Unstored and holding: " .. held.Name)
-					return true
-				end
+				if held then break end
+				task.wait(0.2)
+			until tick() - started >= 2.5
+
+			if held then
+				status("Unstored and holding: " .. held.Name)
+				return true
 			end
 		end
 	end
@@ -5794,26 +5815,39 @@ function buyPendingV4Upgrade(v4State, roleLabel)
 	roleLabel = tostring(roleLabel or "Account")
 	local fragments = tonumber(LocalPlayer.Data.Fragments.Value) or 0
 	local cost = tonumber(v4State.cost) or 0
-	if cost > 0 and fragments < cost then
+	if cost <= 0 then
+		local fallbackCosts = {
+			[2] = 1000,
+			[4] = 2000,
+			[7] = 3250,
+			[9] = 4000,
+		}
+		cost = fallbackCosts[tonumber(v4State.code)] or 1000
+	end
+
+	-- 1. Kiem tra xem co du fragment de mua gear/upgrade khong
+	if fragments < cost then
+		status(roleLabel .. " needs " .. tostring(cost - fragments) .. " more fragments to buy upgrade (" .. formatNumber(fragments) .. "/" .. formatNumber(cost) .. " F)")
 		if handleFragmentFarming(cost) then
 			return true
 		end
-		status(roleLabel .. " needs " .. tostring(cost - fragments) .. " more fragments for V4")
 		return true
 	end
+
+	-- 2. Da du fragment -> dung farm va mua upgrade ngay lap tuc
 	if tyrantFarmingActive then
 		stopTyrantFarming()
 	end
 	if raidFarmingActive then
 		stopRaidFarming()
 	end
-	status(roleLabel .. " buying V4 upgrade")
+	status(roleLabel .. " has enough fragments (" .. formatNumber(fragments) .. "/" .. formatNumber(cost) .. " F) - buying V4 upgrade")
 	local ok, bought = pcall(function()
 		return invokeUpgradeRace("Buy")
 	end)
 	invalidateV4Status()
 	if ok and bought then
-		status(roleLabel .. " V4 upgrade purchased")
+		status(roleLabel .. " V4 upgrade purchased successfully!")
 	else
 		status(roleLabel .. " V4 purchase failed - retrying")
 	end
@@ -6054,25 +6088,28 @@ end
 function runWaitingAccountWork()
     local roleLabel = isUper and "Main" or "Help"
     local fullMoonNow = isnight() and isfullmoon()
-    -- Lu n  c fresh: sau invalidateV4Status(), cache   clear   fetch m i t  server
     local v4State = getV4Status(false)
 
-    -- FIX:  u ti n training/needsPurchase TR C canTrial
-    -- Tr nh cache stale (canTrial=true c ) ch n training loop
-    if v4State.needsTraining or v4State.needsPurchase then
-        if v4State.needsPurchase then
-            buyPendingV4Upgrade(v4State, roleLabel)
-            return
-        end
+    -- UU TIEN #1: KIEM TRA MUA GEAR / UPGRADE & KIEM TRA FRAGMENT TRUOC TIEN
+    if v4State.needsPurchase then
+        buyPendingV4Upgrade(v4State, roleLabel)
+        return
+    end
+
+    -- UU TIEN #2: TRAINING ISLAND (neu can train)
+    if v4State.needsTraining then
         if tyrantFarmingActive then stopTyrantFarming() end
+        if raidFarmingActive then stopRaidFarming() end
         local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
         local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
         if trainingDone then invalidateV4Status() end
         return
     end
 
+    -- UU TIEN #3: TRIAL (neu can trial)
     if v4State.canTrial then
         if tyrantFarmingActive then stopTyrantFarming() end
+        if raidFarmingActive then stopRaidFarming() end
         if fullMoonNow then
             status("Full Moon + trial-ready - waiting auto pair 1 Main + 2 Help")
         else
@@ -6083,11 +6120,13 @@ function runWaitingAccountWork()
 
     if v4State.complete then
         if tyrantFarmingActive then stopTyrantFarming() end
+        if raidFarmingActive then stopRaidFarming() end
         status("Race V4 completed - no more training needed")
         return
     end
 
     if tyrantFarmingActive then stopTyrantFarming() end
+    if raidFarmingActive then stopRaidFarming() end
     local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
     local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
     if trainingDone then
