@@ -2982,9 +2982,9 @@ function runCurrentRaceTrial(race, trialLocation)
 						local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
 						topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
 					end
-					-- Hit do FastAttack tren Stepped ban (da co validator o UseNormalClick).
-					-- Khong goi extractAttack() o day: hai luong cung ban RegisterHit
-					-- se bi server rate-validate va drop het.
+					-- Hit do FastAttack tren Stepped ban (da co validator o
+					-- UseNormalClick). Khong goi extractAttack() o day: hai luong
+					-- cung ban RegisterHit se bi server rate-validate va drop het.
 					humanoid = enemy:FindFirstChild("Humanoid")
 				until Players.LocalPlayer.Character ~= attemptCharacter
 					or not attemptCharacter.Parent
@@ -3027,9 +3027,10 @@ function runCurrentRaceTrial(race, trialLocation)
 		if not root or not health or health.Value <= 0 then
 			return true
 		end
-		-- Bay thang len tren dau SeaBeast: root.CFrame * CFrame.new(0, height, 0).
-		-- Khong lock camera; aimbot chi snap camera + con tro ngay truoc moi phim
-		-- skill (aimAtTrialSkillTarget), du de skill bay dung vao SeaBeast.
+		-- Bay thang len tren dau SeaBeast dung
+		-- SeaBeast.HumanoidRootPart.CFrame * CFrame.new(0, height, 0).
+		-- Khong lock camera; aimbot chi snap camera + con tro trong mot cua so
+		-- ngan quanh moi phat skill (aimAtTrialSkillTarget).
 		local hoverHeight = math.max(50, tonumber(getgenv().Config["Fish Trial Hover Height"]) or 500)
 		local function getSeaBeastStandCFrame(targetRoot)
 			return targetRoot.CFrame * CFrame.new(0, hoverHeight, 0)
@@ -3062,7 +3063,7 @@ function runCurrentRaceTrial(race, trialLocation)
 		equipTrialCombatTool()
 		_G.TRIAL_SKILL_TARGET = root
 		_G.SHOULDSPAMSKILLS = true
-		status("Trial of Water - locked Sea Beast, spamming skills")
+		status("Trial of Water - aiming Sea Beast, spamming skills")
 
 		local attemptCharacter = character
 		repeat
@@ -4711,7 +4712,6 @@ function runRaceTrainingWork(trainingState, roleLabel)
     local ATTACK_RANGE = 15  -- khoảng cách đánh
     local lastTweenAt  = 0   -- tránh tween quá thường xuyên
     local BRING_LIMIT = math.max(1, tonumber(getgenv().Config["Training Bring Mobs"]) or 2)
-    local trainingAnchor = nil
     local lastBringAt = 0
 
     local function isTrainingMob(enemy)
@@ -4727,37 +4727,40 @@ function runRaceTrainingWork(trainingState, roleLabel)
         return false
     end
 
-    -- Keo toi da BRING_LIMIT mob ve ngay duoi anchor moi 0.1s, y het
-    -- TyrSetupBringMobs. Nho vay BladeHits luon co du target trong tam.
-    local function bringTrainingMobs(anchorPosition)
+    -- Gom toi da BRING_LIMIT mob ve sat con dang danh moi 0.1s, y het
+    -- TyrSetupBringMobs. Nhom mob dung mot cho nen orbit cua player phu
+    -- het ca nhom va BladeHits luon du target.
+    local function bringTrainingMobs(anchorRoot)
         local now = tick()
         if now - lastBringAt < 0.1 then
             return
         end
         lastBringAt = now
         local enemies = Workspace:FindFirstChild("Enemies")
-        if not enemies then
+        if not enemies or not anchorRoot or not anchorRoot.Parent then
             return
         end
+        local anchorPosition = anchorRoot.Position
         local brought = 0
         for _, enemy in ipairs(enemies:GetChildren()) do
             if brought >= BRING_LIMIT then
                 break
             end
-            if checkmob_(enemy) and isTrainingMob(enemy) then
-                local enemyRoot = enemy.HumanoidRootPart
-                if (enemyRoot.Position - anchorPosition).Magnitude <= 400 then
-                    pcall(function()
-                        enemyRoot.CanCollide = false
-                        enemyRoot.CFrame = CFrame.new(anchorPosition - Vector3.new(0, ATTACK_RANGE, 0))
-                        local hum = enemy:FindFirstChildOfClass("Humanoid")
-                        if hum and hum:FindFirstChild("Animator") then
-                            hum.Animator:Destroy()
-                        end
-                        sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
-                    end)
-                    brought = brought + 1
-                end
+            local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+            if enemyRoot and enemyRoot ~= anchorRoot and checkmob_(enemy)
+                and isTrainingMob(enemy)
+                and (enemyRoot.Position - anchorPosition).Magnitude <= 400
+            then
+                pcall(function()
+                    enemyRoot.CanCollide = false
+                    enemyRoot.CFrame = CFrame.new(anchorPosition)
+                    local hum = enemy:FindFirstChildOfClass("Humanoid")
+                    if hum and hum:FindFirstChild("Animator") then
+                        hum.Animator:Destroy()
+                    end
+                    sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+                end)
+                brought = brought + 1
             end
         end
     end
@@ -4788,22 +4791,19 @@ function runRaceTrainingWork(trainingState, roleLabel)
                     end
                     AttackConfig.AutoClickEnabled = true
                     status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
-                    -- Bring mob ve duoi chan roi dung yen tai anchor. Orbit + mob
-                    -- di chuyen keo nhau chay vong nen FastAttack khong bao gio
-                    -- vao tam - giong het van de cua Tyrant farm khi BringMobs bat.
+                    -- Dung dung co che attack cua trial Human/Ghoul: bay vong
+                    -- quanh tren dau mob bang getExtractOrbitTarget. Orbit radius
+                    -- 40 + height 15 -> ~43 stud, con trong AttackConfig
+                    -- .AttackDistance 65 nen FastAttack tren Stepped luon co
+                    -- target trong BladeHits.
                     local hrp = mob:FindFirstChild("HumanoidRootPart")
                     if hrp then
-                        if not trainingAnchor
-                            or (trainingAnchor.Position - hrp.Position).Magnitude > 120
-                        then
-                            trainingAnchor = CFrame.new(hrp.Position + Vector3.new(0, ATTACK_RANGE, 0))
-                        end
-                        bringTrainingMobs(trainingAnchor.Position)
-                        local nowT = tick()
-                        if getdis(trainingAnchor) > 8 or nowT - lastTweenAt > 0.5 then
-                            lastTweenAt = nowT
-                            topos(trainingAnchor)
-                        end
+                        -- Keo mob khac ve SAT CON DANG DANH (khong keo ve duoi
+                        -- chan player): keo ve player thi mob chay theo orbit va
+                        -- luon lech 40 stud -> khong bao gio vao tam.
+                        bringTrainingMobs(hrp)
+                        topos(getExtractOrbitTarget(hrp.CFrame, ATTACK_RANGE)
+                            or (hrp.CFrame * CFrame.new(0, ATTACK_RANGE, 0)))
                     end
                     if energy and energy.Value >= 1 then
                         VirtualInputManager:SendKeyEvent(true, "Y", false, game)
@@ -5225,6 +5225,8 @@ _G.SHOULDSPAMSKILLS = false
 local TRIAL_AIM_MAX_DISTANCE = 2000  -- SeaBeast trial range tăng lên để không bị tắt aim
 local TRIAL_AIM_PREDICT_TIME = 0.12
 local TRIAL_AIM_BIND_NAME = "KaitunTrialAim"
+local TRIAL_AIM_HOLD = math.max(0.05, tonumber(getgenv().Config["Trial Aim Hold"]) or 0.35)
+trialAimHoldUntil = 0
 
 local previousTrialAimConnection = getgenv().__KAITUN_TRIAL_AIM_CONNECTION
 if previousTrialAimConnection then
@@ -5284,6 +5286,26 @@ function getTrialAimState()
 	return aimPoint, camera, root
 end
 
+-- KHONG phai lock camera. Ngoai cua so hold, bind nay return ngay va camera
+-- tu do binh thuong. Chi trong TRIAL_AIM_HOLD giay sau moi phat skill no moi
+-- chong lai camera script mac dinh (ghi CurrentCamera.CFrame moi RenderStepped)
+-- de skill bay dung vao Sea Beast tu do cao 500 stud.
+RunService:BindToRenderStep(TRIAL_AIM_BIND_NAME, Enum.RenderPriority.Camera.Value + 1, function()
+	if tick() >= trialAimHoldUntil then
+		return
+	end
+	local aimPoint, camera, root = getTrialAimState()
+	if not aimPoint then
+		return
+	end
+	camera.CFrame = safeLookAt(camera.CFrame.Position, aimPoint)
+	-- Skill bay theo look vector cua nhan vat, nen than phai chuc xuong beast:
+	-- rotation phang tu tren cao se ban vot qua.
+	if (aimPoint - root.Position).Magnitude > 1 then
+		root.CFrame = safeLookAt(root.Position, aimPoint)
+	end
+end)
+
 local function moveTrialMouseTo(x, y)
 	local insetX, insetY = 0, 0
 	pcall(function()
@@ -5304,6 +5326,9 @@ local function aimAtTrialSkillTarget()
 	if not aimPoint or not camera then
 		return false
 	end
+	-- Mo cua so hold: RenderStep giu huong nay trong TRIAL_AIM_HOLD giay, du de
+	-- server doc dung look vector khi skill duoc thu.
+	trialAimHoldUntil = tick() + TRIAL_AIM_HOLD
 	camera.CFrame = safeLookAt(camera.CFrame.Position, aimPoint)
 	if root and (aimPoint - root.Position).Magnitude > 0.5 then
 		root.CFrame = safeLookAt(root.Position, aimPoint)
