@@ -4240,13 +4240,14 @@ function TyrNormalizeName(name)
 	return tostring(name or ""):gsub("%s+", ""):lower()
 end
 
-function TyrEnsureWeapon()
+function TyrEnsureWeapon(allowBuyDragonTalon)
 	local char = LocalPlayer.Character
 	local bp = LocalPlayer:FindFirstChild("Backpack")
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	if not hum or hum.Health <= 0 then
 		return nil
 	end
+	allowBuyDragonTalon = allowBuyDragonTalon == true
 	local config = getgenv().TyrantConfig
 	local weaponName = config.Weapon or "Dragon Talon"
 
@@ -4285,8 +4286,9 @@ function TyrEnsureWeapon()
 		end
 	end
 
-	-- Weapon kh ng c    th  mua Dragon Talon n u c n
-	if TyrNormalizeName(weaponName) == TyrNormalizeName("Dragon Talon") then
+	-- Chi mua Dragon Talon khi farm Tyrant goi ro allowBuyDragonTalon=true.
+	-- Raid/training khong duoc bo raid de chay di mua Talon.
+	if allowBuyDragonTalon and TyrNormalizeName(weaponName) == TyrNormalizeName("Dragon Talon") then
 		TyrBuyDragonTalon()
 		local afterBuy = findTool(weaponName)
 		if afterBuy and afterBuy.Parent ~= char then
@@ -4296,9 +4298,9 @@ function TyrEnsureWeapon()
 		return findTool(weaponName)
 	end
 
-	-- Fallback: t m Blox Fruit ho c Gun (KH NG fallback Melee/Sword   melee ch  d ng khi ph  vase)
+	-- Fallback: dung vu khi dang co san, khong trigger mua.
 	local function findFallback()
-		local priority = {"Blox Fruit", "Gun"}
+		local priority = {"Melee", "Sword", "Blox Fruit", "Gun"}
 		for _, containers in ipairs({char, bp}) do
 			if containers then
 				for _, tool in ipairs(containers:GetChildren()) do
@@ -4422,7 +4424,7 @@ function TyrFarmEnemy(enemy, isBoss)
 		-- Dam bao vu khi va buso haki
 		local selfCharacter = LocalPlayer.Character
 		if not (selfCharacter and selfCharacter:FindFirstChildWhichIsA("Tool")) then
-			TyrEnsureWeapon()
+			TyrEnsureWeapon(true)
 		end
 		module:haki()
 
