@@ -5337,30 +5337,65 @@ function RaidIsActive()
 end
 
 -- Lay danh sach tat ca 5 dao cua Raid tu _WorldOrigin.Locations
+-- Lay danh sach 5 dao thuoc dung cluster tran Raid hien tai cua player
 function RaidGetIslands()
-	local islands = {}
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 	local origin = Workspace:FindFirstChild("_WorldOrigin")
 	local locations = origin and origin:FindFirstChild("Locations")
-	if locations then
-		for _, region in ipairs(locations:GetChildren()) do
-			local name = tostring(region.Name or "")
+	if not locations then return {} end
+
+	local islandsByNum = { {}, {}, {}, {}, {} }
+	for _, region in ipairs(locations:GetChildren()) do
+		local name = tostring(region.Name or "")
+		if string.find(name, "Island", 1, true) then
 			local num = name:match("Island%s*(%d+)") or name:match("^Island(%d+)")
-			if string.find(name, "Island", 1, true) and num then
-				local idx = tonumber(num)
-				if idx and idx >= 1 and idx <= 5 then
-					local part = region:IsA("BasePart") and region
-						or (region:IsA("Model") and (region.PrimaryPart or region:FindFirstChildWhichIsA("BasePart")))
-					if part then
-						islands[idx] = part
-					end
+			local idx = tonumber(num)
+			if idx and idx >= 1 and idx <= 5 then
+				local part = region:IsA("BasePart") and region
+					or (region:IsA("Model") and (region.PrimaryPart or region:FindFirstChildWhichIsA("BasePart")))
+				if part and (part.Position - Vector3.new(0, 0, 0)).Magnitude > 5000 then
+					table.insert(islandsByNum[idx], part)
 				end
 			end
 		end
 	end
-	return islands
+
+	-- 1. Tim Island 1 gan vi tri cua player nhat
+	local resolvedIslands = {}
+	local startPos = root and root.Position or Vector3.new(0, 0, 0)
+	local island1, bestDist = nil, math.huge
+	for _, part in ipairs(islandsByNum[1]) do
+		local dist = (part.Position - startPos).Magnitude
+		if dist < bestDist then
+			island1 = part
+			bestDist = dist
+		end
+	end
+
+	if not island1 and #islandsByNum[1] > 0 then
+		island1 = islandsByNum[1][1]
+	end
+	resolvedIslands[1] = island1
+
+	-- 2. Cac dao 2, 3, 4, 5 phai thuoc cung cluster voi dao lien truoc (< 2500 studs)
+	for i = 2, 5 do
+		local prev = resolvedIslands[i - 1]
+		local refPos = prev and prev.Position or startPos
+		local bestPart, nearest = nil, math.huge
+		for _, part in ipairs(islandsByNum[i]) do
+			local dist = (part.Position - refPos).Magnitude
+			if dist < nearest then
+				bestPart = part
+				nearest = dist
+			end
+		end
+		resolvedIslands[i] = bestPart
+	end
+
+	return resolvedIslands
 end
 
--- Tim dao raid gan nguoi choi nhat
+-- Tim dao raid gan nguoi choi nhat trong cluster
 function RaidGetCurrentIsland()
 	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 	if not root then return nil end
@@ -5423,7 +5458,6 @@ function RaidGetActiveWaveIsland()
 				if islands[waveIdx] then
 					local dist = (enemyData.Position - islands[waveIdx].Position).Magnitude
 					if dist < 800 then
-						-- Neu tim thay quai o dao cao hon -> cap nhat tien do wave len dao do
 						if waveIdx > currentRaidWave then
 							currentRaidWave = waveIdx
 						end
@@ -5484,7 +5518,6 @@ function RaidFightAllIslands(maxDuration)
 
 				status("Raid Island " .. tostring(currentRaidWave) .. "/5: killing " .. enemyName .. " [" .. math.floor(enemyHum.Health) .. " HP]")
 
-				-- Orbit 3D va tan cong
 				local orbit = getExtractOrbitTarget(enemyRoot.CFrame, 22)
 					or CFrame.new(enemyRoot.Position + Vector3.new(0, 22, 0))
 				module:topos(orbit, 220, 0, true, true)
@@ -5497,8 +5530,8 @@ function RaidFightAllIslands(maxDuration)
 				TyrNormalAttack(0.2, enemyRoot)
 			else
 				-- Da diet het quai tren dao hien tai:
-				-- Cho 2 giay de mob kip chet/bien mat, sau do tien len dao tiep theo (khong bao gio quay ve dao 1)
-				if tick() - lastTargetTime > 2 and tick() - lastWaveAdvance > 3 then
+				-- Cho 1s de mob tiep theo spawn hoac tien len dao tiep theo trong cung cluster
+				if tick() - lastTargetTime > 1.2 and tick() - lastWaveAdvance > 2 then
 					lastWaveAdvance = tick()
 					if currentRaidWave < 5 then
 						currentRaidWave = currentRaidWave + 1
@@ -5512,13 +5545,12 @@ function RaidFightAllIslands(maxDuration)
 				else
 					status("Raid: Island " .. tostring(currentRaidWave) .. "/5 - waiting for spawn...")
 				end
-				task.wait(0.5)
+				task.wait(0.3)
 			end
 		end
 		task.wait(0.04)
 	end
 
-	-- Khi het tran raid (thang/thua/timeout) -> reset wave ve 1 cho tran tiep theo
 	currentRaidWave = 1
 	module:stopTween()
 end
