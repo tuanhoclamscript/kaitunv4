@@ -4760,6 +4760,63 @@ function stopTyrantFarming()
 	module:stopTween()
 end
 
+function startTyrantFarming(targetFragments)
+	tyrantFragmentTarget = math.max(0, tonumber(targetFragments) or tyrantFragmentTarget or 10000)
+	if tyrantFarmingTask then
+		tyrantFarmingActive = true
+		TyrState.Farming = true
+		_G.TYRANT_FARMING = true
+		return
+	end
+	tyrantFarmingActive = true
+	TyrState.Farming = true
+	_G.TYRANT_FARMING = true
+	if not tyrantSetupDone then
+		tyrantSetupDone = true
+		pcall(TyrLoadAttack)
+		pcall(TyrSetupRegenTracker)
+		pcall(TyrSetupBringMobs)
+	end
+	tyrantFarmingTask = task.spawn(function()
+		while tyrantFarmingActive do
+			local v4State = getV4Status(false)
+			local fragments = tonumber(LocalPlayer.Data.Fragments.Value) or 0
+			if v4State.canTrial or v4State.complete or fragments >= tyrantFragmentTarget then
+				break
+			end
+			local tyrant = TyrFindTyrant()
+			if tyrant then
+				status("Tyrant spawned - killing boss")
+				TyrFarmEnemy(tyrant, true)
+			elseif tick() - tyrantLastVaseSweep >= vaseSweepInterval() then
+				tyrantLastVaseSweep = tick()
+				TyrSweepArenaForVases()
+			else
+				local mob = TyrGetNearestTikiMob()
+				if mob then
+					TyrBindFarmSpawn()
+					TyrFarmEnemy(mob, false)
+				else
+					status("Tyrant farm - moving to Tiki mobs")
+					TyrTweenTo(TIKI_CENTER, getgenv().TyrantConfig.TweenSpeed, true)
+					task.wait(0.5)
+				end
+			end
+			task.wait(0.1)
+		end
+		module:stopTween()
+		tyrantFarmingTask = nil
+		tyrantFarmingActive = false
+		TyrState.Farming = false
+		_G.TYRANT_FARMING = false
+		TyrState.CurrentMode = "STARTING"
+	end)
+end
+
+function readReadyFiles()
+	return 0, {}
+end
+
 -- ===================== RAID FRAGMENT FARMING =====================
 -- Port tu Extract.lua + remotes da verify trong src.rbxlx:
 --  - Inventory: ItemReplicationService:GetItems(KEYS.*) + ItemConfig.match
@@ -5617,38 +5674,15 @@ function handleFragmentFarming(requiredFragments)
 		local autoraid = farmConfig.autoraid
 		local autotyrant = farmConfig.autotyrant
 		if autoraid then
-			-- Dang o dao raid -> danh tiep, khong de tyrant keo di
-			if RaidGetCurrentIsland() then
-				if tyrantFarmingActive then
-					stopTyrantFarming()
-				end
-				startRaidFarming(target)
-				return raidFarmingActive
+			if tyrantFarmingActive then
+				stopTyrantFarming()
 			end
-			if os.time() >= RaidFarming.RetryAt then
-				local ok, result = pcall(RaidRunOnce, target)
-				if not ok then
-					RaidFarming.RetryAt = os.time() + 30
-					result = "wait"
-				end
-				if result == "farmed" or result == "retry" then
-					if tyrantFarmingActive then
-						stopTyrantFarming()
-					end
-					startRaidFarming(target)
-					return raidFarmingActive
-				end
-				-- "wait": chip cd / khong fruit < 1M -> farm tyrant trong luc cho
-			end
+			startRaidFarming(target)
+			return raidFarmingActive
 		end
 		if autotyrant then
 			startTyrantFarming(target)
 			return tyrantFarmingActive
-		end
-		if autoraid then
-			-- Chi bat autoraid, khong co autotyrant: van chay vong raid
-			startRaidFarming(target)
-			return raidFarmingActive
 		end
 	end
 	return false
