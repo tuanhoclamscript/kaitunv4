@@ -4779,27 +4779,61 @@ function startTyrantFarming(targetFragments)
 	end
 	tyrantFarmingTask = task.spawn(function()
 		while tyrantFarmingActive do
+			-- DANG TRONG TRAN RAID THAT -> DUNG TYRANT NGAY LAP TUC!
+			if RaidIsActive() then
+				break
+			end
+
 			local v4State = getV4Status(false)
 			local fragments = tonumber(LocalPlayer.Data.Fragments.Value) or 0
 			if v4State.canTrial or v4State.complete or fragments >= tyrantFragmentTarget then
 				break
 			end
-			local tyrant = TyrFindTyrant()
-			if tyrant then
-				status("Tyrant spawned - killing boss")
-				TyrFarmEnemy(tyrant, true)
-			elseif tick() - tyrantLastVaseSweep >= vaseSweepInterval() then
-				tyrantLastVaseSweep = tick()
-				TyrSweepArenaForVases()
+
+			-- Neu autoraid bat va raid het cooldown (RetryAt het) -> thoat Tyrant de quay lai thu Raid
+			local farmConfig = getgenv().Config["Farm Fragments"]
+			local autoraid = type(farmConfig) == "table" and farmConfig.autoraid == true
+			if autoraid and os.time() >= RaidFarming.RetryAt then
+				break
+			end
+
+			local config = getgenv().TyrantConfig
+			if config and config.AutoBuso then
+				local c = LocalPlayer.Character
+				if c and not c:FindFirstChild("HasBuso") then
+					pcall(function() CommF_:InvokeServer("Buso") end)
+				end
+			end
+
+			local playerHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+			if not playerHum or playerHum.Health <= 0 then
+				status("Respawning before fragment farm")
+				task.wait(1)
 			else
-				local mob = TyrGetNearestTikiMob()
-				if mob then
-					TyrBindFarmSpawn()
-					TyrFarmEnemy(mob, false)
+				TyrEnsureWeapon(true)
+				local moonSuffix = (isnight() and isfullmoon()) and " | Full Moon" or ""
+				local tyrant = TyrFindTyrant()
+				if tyrant then
+					status("Fighting Tyrant for V4 fragments" .. moonSuffix)
+					TyrFarmEnemy(tyrant, true)
+				elseif TyrAreTyrantEyesReady() then
+					status("Breaking vases for Tyrant" .. moonSuffix)
+					TyrBreakVases()
+					tyrantLastVaseSweep = tick()
+				elseif tick() - tyrantLastVaseSweep >= vaseSweepInterval() then
+					tyrantLastVaseSweep = tick()
+					TyrSweepArenaForVases()
 				else
-					status("Tyrant farm - moving to Tiki mobs")
-					TyrTweenTo(TIKI_CENTER, getgenv().TyrantConfig.TweenSpeed, true)
-					task.wait(0.5)
+					local mob = TyrGetNearestTikiMob()
+					if mob then
+						TyrBindFarmSpawn()
+						TyrFarmEnemy(mob, false)
+					else
+						status("Tyrant farm - moving to Tiki center")
+						TyrTweenTo(TIKI_CENTER, getgenv().TyrantConfig.TweenSpeed, true)
+						TyrBindFarmSpawn()
+						task.wait(0.5)
+					end
 				end
 			end
 			task.wait(0.1)
@@ -4835,17 +4869,19 @@ local RaidFarming = {
 }
 
 local RAID_FRUIT_VALUES = {
-	rocket = 5000, spin = 7500, blade = 30000, spring = 60000,
+	rocket = 5000, spin = 7500, blade = 30000, chop = 30000, spring = 60000,
 	bomb = 80000, smoke = 100000, spike = 180000, flame = 250000,
 	falcon = 300000, ice = 350000, sand = 420000, dark = 500000,
 	diamond = 600000, light = 650000, rubber = 750000,
-	barrier = 800000, ghost = 940000, magma = 960000,
+	barrier = 800000, ghost = 940000, revive = 940000, magma = 960000,
 }
 
 function normalizeRaidFruitName(value)
 	local name = string.lower(tostring(value or ""))
 	name = name:gsub("%b[]", "")
+	name = name:gsub("%b()", "")
 	name = name:gsub("physicalmoveset", "")
+	name = name:gsub("moveset", "")
 	name = name:gsub(" fruit", "")
 	name = name:gsub("%-", " ")
 	name = name:gsub("%s+", " ")
@@ -5013,13 +5049,13 @@ function RaidGetOwnedUnder1MFruits()
 		end
 	end
 
-	-- 1. Check server remote: getInventoryFruits (tra ve danh sach trai dang co trong kho)
+	-- 1. Check server remote: getInventoryFruits
 	pcall(function()
 		local res = CommF_:InvokeServer("getInventoryFruits")
 		if type(res) == "table" then
-			for _, item in pairs(res) do
+			for k, item in pairs(res) do
 				if type(item) == "table" then
-					local name = item.Name or item.name or item.StorageKey or item.ItemName or ""
+					local name = item.Name or item.name or item.StorageKey or item.ItemName or item.DisplayName or tostring(k)
 					local price = item.Price or item.Value or item.price or item.value or 0
 					local count = item.Count or item.count or item.Quantity or 1
 					if (tonumber(count) or 1) > 0 then
@@ -5039,9 +5075,14 @@ function RaidGetOwnedUnder1MFruits()
 			for _, item in pairs(res) do
 				if type(item) == "table" then
 					local itemType = tostring(item.Type or item.Category or item.Section or "")
-					local name = item.Name or item.name or item.StorageKey or ""
-					local count = tonumber(item.Count or item.Quantity or item.count) or 0
-					if (itemType:find("Fruit") or name:find("Fruit") or name:find("-") or RAID_FRUIT_VALUES[normalizeRaidFruitName(name)]) and count > 0 then
+					local name = item.Name or item.name or item.StorageKey or item.ItemName or ""
+					local count = tonumber(item.Count or item.Quantity or item.count) or 1
+					local fName = normalizeRaidFruitName(name)
+					local looksLikeFruit = itemType:lower():find("fruit", 1, true) ~= nil
+						or name:lower():find("fruit", 1, true) ~= nil
+						or name:find("-", 1, true) ~= nil
+						or RAID_FRUIT_VALUES[fName] ~= nil
+					if looksLikeFruit and count > 0 then
 						addFruit(name, item.Value or item.Price or 0, count)
 					end
 				end
@@ -5049,8 +5090,7 @@ function RaidGetOwnedUnder1MFruits()
 		end
 	end)
 
-	-- 3. Check client ItemReplicationService. Fruit storage often reports Owned=true
-	-- with Quantity=0, so do not require count > 0 here.
+	-- 3. Check client ItemReplicationService
 	pcall(function()
 		RaidRefreshInventory()
 		for _, item in pairs(RaidFarming.Inventory) do
@@ -5059,10 +5099,11 @@ function RaidGetOwnedUnder1MFruits()
 				local name = tostring(item.Name or item.Label or "")
 				local idType = tostring(item.IdType or item.Type or "")
 				local owned = item.Owned == true or count > 0
+				local fName = normalizeRaidFruitName(name)
 				local looksLikeFruit = idType:lower():find("fruit", 1, true) ~= nil
 					or name:lower():find("fruit", 1, true) ~= nil
 					or name:find("-", 1, true) ~= nil
-					or RAID_FRUIT_VALUES[normalizeRaidFruitName(name)] ~= nil
+					or RAID_FRUIT_VALUES[fName] ~= nil
 				if owned and looksLikeFruit then
 					addFruit(name, item.Value, math.max(1, count))
 				end
@@ -5538,58 +5579,72 @@ function RaidWaitForStart(timeout)
 	return RaidIsActive()
 end
 
--- Mot vong raid hoan chinh
+-- Mot vong raid hoan chinh. Tra ve:
+--   "farmed"  : dang trong raid hoac vua hoan thanh mot tran raid
+--   "wait"    : khong co chip, mua beli fail, khong co fruit / mua fruit fail -> chuyen Tyrant farm neu co
+--   "retry"   : dang thu lai thao tac raid summon / cho stream
+--   "stop"    : da du fragment hoac level < 1100
 function RaidRunOnce(targetFragments)
 	local frags = tonumber(LocalPlayer.Data.Fragments.Value) or 0
 	if frags >= targetFragments then
 		return "stop"
 	end
 
-	-- 1. Neu dang trong tran Raid -> danh thang tu dao 1 toi dao 5
+	-- 1. Dang trong tran Raid -> Danh thang tu dao 1 toi dao 5, khong lam bat ky viec gi khac!
 	if RaidIsActive() then
 		status("In Raid - clearing islands 1 to 5")
 		RaidFightAllIslands(600)
 		return "farmed"
 	end
 
-	-- Gate level/sea (raid level >= 1100)
+	-- Gate level (raid yeu cau level >= 1100)
 	local level = tonumber(LocalPlayer.Data.Level.Value) or 0
 	if level < 1100 then
 		return "stop"
 	end
 
 	-- 2. Co chip chua?
-	if not RaidCheckSpecialMicrochip() then
-		local bought, err = RaidBuyChip(5)
-		if not bought then
-			-- Mua that bai (cooldown/het beli): unstore fruit < 1M va quy doi
-			status("Chip buy failed (" .. tostring(err) .. ") - unstoring fruit for chip")
-			if RaidLoadFruitForChip() then
+	local chip = RaidCheckSpecialMicrochip()
+	if not chip then
+		-- Thu 1: Mua chip bang Beli
+		local boughtWithBeli, beliErr = RaidBuyChip(1)
+		if not boughtWithBeli then
+			status("Chip buy with Beli failed (" .. tostring(beliErr) .. ") - trying fruit trade")
+			-- Thu 2: Unstore fruit < 1M va equip len tay de doi chip
+			local fruitLoaded = RaidLoadFruitForChip()
+			if fruitLoaded then
 				task.wait(0.3)
-				local bought2 = RaidBuyChip(5)
-				if not bought2 then
+				-- Thu mua lai khi da cam fruit tren tay
+				local boughtWithFruit, fruitErr = RaidBuyChip(2)
+				if not boughtWithFruit then
+					status("Chip buy with fruit failed (" .. tostring(fruitErr) .. ")")
 					RaidFarming.RetryAt = os.time() + 60
 					return "wait"
 				end
 			else
+				-- Khong co fruit < 1M trong inventory storage
+				status("No fruit < 1M in storage - cannot buy raid chip")
 				RaidFarming.RetryAt = os.time() + 60
 				return "wait"
 			end
 		end
 	end
 
-	if not RaidCheckSpecialMicrochip() then
-		return "retry"
+	-- Kiem tra lai xem chip da co tren tay / backpack chua
+	chip = RaidCheckSpecialMicrochip()
+	if not chip then
+		RaidFarming.RetryAt = os.time() + 30
+		return "wait"
 	end
 
-	-- 3. Bat dau trieu hoi Raid
+	-- 3. Bat dau trieu hoi Raid (bam nut summon)
 	if not RaidStartSummon() then
-		status("Raid summon not found - retrying")
+		status("Raid summon button not reached - retrying")
 		task.wait(1)
 		return "retry"
 	end
 
-	-- 4. Cho raid bat dau
+	-- 4. Cho raid bat dau va dich chuyen vao map raid
 	if not RaidWaitForStart(30) then
 		if not RaidIsActive() then
 			RaidFarming.RetryAt = os.time() + 10
@@ -5630,11 +5685,19 @@ function startRaidFarming(targetFragments)
 			if v4State.canTrial or v4State.complete or frags >= raidFragmentTarget then
 				break
 			end
-			if os.time() < RaidFarming.RetryAt then
-				-- Cho cooldown chip: tam thoi khong lam gi (tyrant co the chay
-				-- song song qua handleFragmentFarming trigger)
-				status("Raid on cooldown - waiting")
-				task.wait(2)
+
+			-- Neu dang trong tran Raid -> danh het 5 dao
+			if RaidIsActive() then
+				RaidFightAllIslands(600)
+			elseif os.time() < RaidFarming.RetryAt then
+				local farmConfig = getgenv().Config["Farm Fragments"]
+				local autotyrant = type(farmConfig) == "table" and farmConfig.autotyrant == true
+				if autotyrant then
+					break
+				else
+					status("Raid on cooldown - waiting")
+					task.wait(2)
+				end
 			else
 				local ok, result = pcall(RaidRunOnce, raidFragmentTarget)
 				if not ok then
@@ -5644,11 +5707,13 @@ function startRaidFarming(targetFragments)
 					task.wait(0.5)
 				elseif result == "retry" then
 					task.wait(1.5)
-				else -- "wait" hoac "stop"
-					RaidFarming.RetryAt = os.time() + 60
-					raidFarmingActive = false
+				elseif result == "wait" then
+					break
+				else -- "stop"
+					break
 				end
 			end
+			task.wait(0.1)
 		end
 		module:stopTween()
 		raidFarmingTask = nil
@@ -5663,61 +5728,62 @@ function handleFragmentFarming(requiredFragments)
 	end
 	local state = getV4Status(false)
 	if state.canTrial or state.complete then
-		if tyrantFarmingActive then
-			stopTyrantFarming()
-		end
-		if raidFarmingActive then
-			stopRaidFarming()
-		end
+		if tyrantFarmingActive then stopTyrantFarming() end
+		if raidFarmingActive then stopRaidFarming() end
 		return false
 	end
 	local target = math.max(0, tonumber(requiredFragments) or 10000)
 	local frags = tonumber(LocalPlayer.Data.Fragments.Value) or 0
 	if frags >= target then
+		if tyrantFarmingActive then stopTyrantFarming() end
+		if raidFarmingActive then stopRaidFarming() end
+		return false
+	end
+
+	local autoraid = type(farmConfig) == "table" and farmConfig.autoraid == true
+	local autotyrant = type(farmConfig) == "table" and farmConfig.autotyrant == true
+
+	-- 1. Neu dang trong tran Raid that -> Uu tien tuyet doi, TUYET DOI khong de Tyrant keo di!
+	if RaidIsActive() then
 		if tyrantFarmingActive then
 			stopTyrantFarming()
 		end
+		startRaidFarming(target)
+		return true
+	end
+
+	-- 2. Neu bat Auto Raid:
+	if autoraid then
+		if os.time() < RaidFarming.RetryAt then
+			if autotyrant then
+				if raidFarmingActive then
+					stopRaidFarming()
+				end
+				status("Raid blocked - farming Tyrant for fragments (" .. tostring(frags) .. "/" .. tostring(target) .. ")")
+				startTyrantFarming(target)
+				return tyrantFarmingActive
+			else
+				status("Raid on cooldown - waiting (" .. tostring(RaidFarming.RetryAt - os.time()) .. "s)")
+				return true
+			end
+		end
+
+		if tyrantFarmingActive then
+			stopTyrantFarming()
+		end
+		startRaidFarming(target)
+		return raidFarmingActive
+	end
+
+	-- 3. Neu chi bat Auto Tyrant:
+	if autotyrant then
 		if raidFarmingActive then
 			stopRaidFarming()
 		end
-		return false
+		startTyrantFarming(target)
+		return tyrantFarmingActive
 	end
-	-- Uu tien RAID: neu dang raid hoac mua duoc chip thi farm bang raid.
-	-- Chip cooldown + khong co fruit < 1M beli -> fallback farm Tyrant.
-	if type(farmConfig) == "table" then
-		local autoraid = farmConfig.autoraid
-		local autotyrant = farmConfig.autotyrant
-		if autoraid then
-			if RaidIsActive() then
-				if tyrantFarmingActive then
-					stopTyrantFarming()
-				end
-				startRaidFarming(target)
-				return raidFarmingActive
-			end
-			if os.time() < RaidFarming.RetryAt then
-				if autotyrant then
-					if raidFarmingActive then
-						stopRaidFarming()
-					end
-					status("Raid blocked - farming Tyrant for fragments")
-					startTyrantFarming(target)
-					return tyrantFarmingActive
-				end
-				status("Raid on cooldown - waiting")
-				return true
-			end
-			if tyrantFarmingActive then
-				stopTyrantFarming()
-			end
-			startRaidFarming(target)
-			return raidFarmingActive
-		end
-		if autotyrant then
-			startTyrantFarming(target)
-			return tyrantFarmingActive
-		end
-	end
+
 	return false
 end
 
