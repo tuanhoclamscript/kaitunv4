@@ -3460,6 +3460,23 @@ function tryRunOwnRaceTrial()
 end
 
 function isFFAActive()
+	-- 1. Check PlayerGui for "FIGHT!" text label (Blox Fruits FFA banner)
+	local pgui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if pgui then
+		for _, gui in ipairs(pgui:GetChildren()) do
+			if gui:IsA("ScreenGui") and gui.Enabled then
+				for _, desc in ipairs(gui:GetDescendants()) do
+					if desc:IsA("TextLabel") and desc.Visible and desc.TextTransparency < 1 then
+						local txt = string.lower(tostring(desc.Text or ""))
+						if txt:find("fight", 1, true) then
+							return true
+						end
+					end
+				end
+			end
+		end
+	end
+	-- 2. Check Forcefield transparency in workspace
 	local ok, transparency = pcall(function()
 		return workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency
 	end)
@@ -3601,11 +3618,8 @@ function runTrialCompletionBarrier()
 			barrierLastDone = math.max(barrierLastDone or -1, groupTrialDoneCount or 0)
 		end
 		if tick() - barrierProgressAt > TRIAL_BARRIER_TIMEOUT then
-			status("Trial barrier timeout - resetting cycle")
+			status("Trial barrier timeout - gear not claimed, resetting for next trial")
 			resetTrialBarrierState()
-			if isUper and isMyUpgearTurn() then
-				beginPostTrialFarmTransition("trial_barrier_timeout")
-			end
 			return
 		end
 		status("Trial done - holding in Temple, waiting group " .. tostring(detail))
@@ -3663,7 +3677,7 @@ function runTrialCompletionBarrier()
 			return
 		end
 	end
-	status("Group finished - Main claiming gear")
+	status("Group finished - Main claiming gear at Ancient Clock")
 	if tick() - lastBarrierGearCheckAt >= 1.5 then
 		lastBarrierGearCheckAt = tick()
 		local claimed = false
@@ -3671,13 +3685,11 @@ function runTrialCompletionBarrier()
 			claimed = checkgear()
 		end)
 		if claimed then
+			status("Gear claimed successfully! Trial complete.")
+			invalidateV4Status()
 			beginPostTrialFarmTransition("gear_claimed")
 			return
 		end
-	end
-	local v4State = getV4Status(false)
-	if v4State and (v4State.needsTraining == true or v4State.needsPurchase == true) then
-		beginPostTrialFarmTransition("trial_completed")
 	end
 end
 
@@ -6023,14 +6035,16 @@ task.spawn(function()
 			pairTempleReadyAt = 0
 			lastTempleReadyCount = 0
 			local trialCycleConfirmed = pairTrialCycleStarted or pairV3ActivatedAt > 0 or handledRoundId ~= "" or isInsideOwnTrial()
-			local postTrialWorkAvailable = pairedV4State.needsTraining == true or pairedV4State.needsPurchase == true or pairedV4State.needsGearClaim == true
-			if PAIR_RELEASE_AFTER_TRIAL and isUper and isMyUpgearTurn() and trialCycleConfirmed and postTrialWorkAvailable then
-				pairTrialCycleStarted = true
-				status("Trial completed - claiming gear before farm")
-				pcall(checkgear)
-				task.wait(0.45)
-				beginPostTrialFarmTransition("trial_completed")
-				break
+			if PAIR_RELEASE_AFTER_TRIAL and isUper and isMyUpgearTurn() and trialCycleConfirmed then
+				local claimed = false
+				pcall(function() claimed = checkgear() end)
+				if claimed then
+					pairTrialCycleStarted = true
+					status("Gear claimed successfully - proceeding to next step")
+					invalidateV4Status()
+					beginPostTrialFarmTransition("gear_claimed")
+					break
+				end
 			end
 			if pairedV4State.complete then
 				if tyrantFarmingActive then
