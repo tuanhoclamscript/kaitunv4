@@ -5049,21 +5049,26 @@ function RaidGetOwnedUnder1MFruits()
 		end
 	end)
 
-	-- 3. Check client ItemReplicationService (neu remote server khong tra ve)
-	if #ownedFruits == 0 then
-		pcall(function()
-			RaidRefreshInventory()
-			for _, item in pairs(RaidFarming.Inventory) do
-				if type(item) == "table" then
-					local count = tonumber(item.Count) or tonumber(item.Quantity) or 0
-					local owned = item.Owned == true or count > 0
-					if owned and count > 0 then
-						addFruit(item.Name or item.Label, item.Value, count)
-					end
+	-- 3. Check client ItemReplicationService. Fruit storage often reports Owned=true
+	-- with Quantity=0, so do not require count > 0 here.
+	pcall(function()
+		RaidRefreshInventory()
+		for _, item in pairs(RaidFarming.Inventory) do
+			if type(item) == "table" then
+				local count = tonumber(item.Count) or tonumber(item.Quantity) or 0
+				local name = tostring(item.Name or item.Label or "")
+				local idType = tostring(item.IdType or item.Type or "")
+				local owned = item.Owned == true or count > 0
+				local looksLikeFruit = idType:lower():find("fruit", 1, true) ~= nil
+					or name:lower():find("fruit", 1, true) ~= nil
+					or name:find("-", 1, true) ~= nil
+					or RAID_FRUIT_VALUES[normalizeRaidFruitName(name)] ~= nil
+				if owned and looksLikeFruit then
+					addFruit(name, item.Value, math.max(1, count))
 				end
 			end
-		end)
-	end
+		end
+	end)
 
 	-- 4. Check UI Inventory Storage trong PlayerGui neu co
 	if #ownedFruits == 0 then
@@ -5202,6 +5207,7 @@ function RaidLoadFruitForChip()
 	for _, fruit in ipairs(ownedFruits) do
 		local rawName = fruit.Name
 		local loadName = RaidCleanLoadName(rawName)
+		local cleanFruitName = RaidCleanLoadName(fruit.CleanName or normalizeRaidFruitName(rawName))
 		local candidates = { rawName, loadName }
 		local left, right = loadName:match("^(.-)%-(.-)$")
 		if left and right and left:gsub("%s", "") == right:gsub("%s", "") then
@@ -5210,9 +5216,17 @@ function RaidLoadFruitForChip()
 		elseif not loadName:find("Fruit") then
 			table.insert(candidates, loadName .. " Fruit")
 		end
+		if cleanFruitName ~= "" then
+			table.insert(candidates, cleanFruitName)
+			table.insert(candidates, cleanFruitName .. " Fruit")
+			table.insert(candidates, cleanFruitName .. "-" .. cleanFruitName)
+		end
 
+		local tried = {}
 		for _, candidateName in ipairs(candidates) do
-			if candidateName and candidateName ~= "" then
+			candidateName = tostring(candidateName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+			if candidateName ~= "" and not tried[candidateName] then
+				tried[candidateName] = true
 				status("Unstoring owned [" .. candidateName .. "] (" .. formatNumber(fruit.Value) .. " Beli)")
 				pcall(function()
 					CommF_:InvokeServer("LoadFruit", candidateName)
