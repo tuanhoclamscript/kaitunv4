@@ -2982,9 +2982,9 @@ function runCurrentRaceTrial(race, trialLocation)
 						local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
 						topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
 					end
-					-- FastAttack tren Stepped ban RegisterHit khong kem validator;
-					-- extractAttack() ban dung goi hit cua Extract.lua.
-					extractAttack()
+					-- Hit do FastAttack tren Stepped ban (da co validator o UseNormalClick).
+					-- Khong goi extractAttack() o day: hai luong cung ban RegisterHit
+					-- se bi server rate-validate va drop het.
 					humanoid = enemy:FindFirstChild("Humanoid")
 				until Players.LocalPlayer.Character ~= attemptCharacter
 					or not attemptCharacter.Parent
@@ -3027,30 +3027,12 @@ function runCurrentRaceTrial(race, trialLocation)
 		if not root or not health or health.Value <= 0 then
 			return true
 		end
-		--  ng s t c nh SeaBeast, cao h n m t ch t, m t quay v o n :
-		--  ng th ng 500 stud ph a tr n l m m i skill ra ngo i t m.
-		local standHeight = math.max(10, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 25)
-		local standOffset = math.max(15, tonumber(getgenv().Config["Fish Trial Stand Offset"]) or 35)
+		-- Bay thang len tren dau SeaBeast: root.CFrame * CFrame.new(0, height, 0).
+		-- Khong lock camera; aimbot chi snap camera + con tro ngay truoc moi phim
+		-- skill (aimAtTrialSkillTarget), du de skill bay dung vao SeaBeast.
+		local hoverHeight = math.max(50, tonumber(getgenv().Config["Fish Trial Hover Height"]) or 500)
 		local function getSeaBeastStandCFrame(targetRoot)
-			local beastPosition = targetRoot.Position
-			local selfCharacter = Players.LocalPlayer.Character
-			local selfRoot = selfCharacter and selfCharacter:FindFirstChild("HumanoidRootPart")
-			local direction = Vector3.new(0, 0, 1)
-			if selfRoot then
-				local flat = Vector3.new(
-					selfRoot.Position.X - beastPosition.X,
-					0,
-					selfRoot.Position.Z - beastPosition.Z
-				)
-				if flat.Magnitude > 1 then
-					direction = flat.Unit
-				end
-			end
-			local reach = math.max(targetRoot.Size.X, targetRoot.Size.Z) / 2
-			local position = beastPosition
-				+ direction * (reach + standOffset)
-				+ Vector3.new(0, standHeight, 0)
-			return safeLookAt(position, beastPosition)
+			return targetRoot.CFrame * CFrame.new(0, hoverHeight, 0)
 		end
 		status("Trial of Water - moving above Sea Beast")
 		local standCFrame = getSeaBeastStandCFrame(root)
@@ -4728,6 +4710,57 @@ function runRaceTrainingWork(trainingState, roleLabel)
 
     local ATTACK_RANGE = 15  -- khoảng cách đánh
     local lastTweenAt  = 0   -- tránh tween quá thường xuyên
+    local BRING_LIMIT = math.max(1, tonumber(getgenv().Config["Training Bring Mobs"]) or 2)
+    local trainingAnchor = nil
+    local lastBringAt = 0
+
+    local function isTrainingMob(enemy)
+        if islandData.Mobs[enemy.Name] then
+            return true
+        end
+        local lowered = enemy.Name:lower()
+        for _, name in ipairs(mobNames) do
+            if lowered:find(name:lower(), 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Keo toi da BRING_LIMIT mob ve ngay duoi anchor moi 0.1s, y het
+    -- TyrSetupBringMobs. Nho vay BladeHits luon co du target trong tam.
+    local function bringTrainingMobs(anchorPosition)
+        local now = tick()
+        if now - lastBringAt < 0.1 then
+            return
+        end
+        lastBringAt = now
+        local enemies = Workspace:FindFirstChild("Enemies")
+        if not enemies then
+            return
+        end
+        local brought = 0
+        for _, enemy in ipairs(enemies:GetChildren()) do
+            if brought >= BRING_LIMIT then
+                break
+            end
+            if checkmob_(enemy) and isTrainingMob(enemy) then
+                local enemyRoot = enemy.HumanoidRootPart
+                if (enemyRoot.Position - anchorPosition).Magnitude <= 400 then
+                    pcall(function()
+                        enemyRoot.CanCollide = false
+                        enemyRoot.CFrame = CFrame.new(anchorPosition - Vector3.new(0, ATTACK_RANGE, 0))
+                        local hum = enemy:FindFirstChildOfClass("Humanoid")
+                        if hum and hum:FindFirstChild("Animator") then
+                            hum.Animator:Destroy()
+                        end
+                        sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+                    end)
+                    brought = brought + 1
+                end
+            end
+        end
+    end
 
     while not shouldStopTrainingCycle() do
         local mob = CheckMonster(table.unpack(mobNames))
@@ -4755,15 +4788,21 @@ function runRaceTrainingWork(trainingState, roleLabel)
                     end
                     AttackConfig.AutoClickEnabled = true
                     status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
-                    -- Ch  tween khi xa mob V    qua 0.5s k  t  tween tr c
-                    -- Tr nh li n t c cancel tween m i frame   bay qua bay l i
+                    -- Bring mob ve duoi chan roi dung yen tai anchor. Orbit + mob
+                    -- di chuyen keo nhau chay vong nen FastAttack khong bao gio
+                    -- vao tam - giong het van de cua Tyrant farm khi BringMobs bat.
                     local hrp = mob:FindFirstChild("HumanoidRootPart")
                     if hrp then
-                        local dist = getdis(hrp.CFrame)
+                        if not trainingAnchor
+                            or (trainingAnchor.Position - hrp.Position).Magnitude > 120
+                        then
+                            trainingAnchor = CFrame.new(hrp.Position + Vector3.new(0, ATTACK_RANGE, 0))
+                        end
+                        bringTrainingMobs(trainingAnchor.Position)
                         local nowT = tick()
-						if dist > ATTACK_RANGE or nowT - lastTweenAt > 0.4 then
-							lastTweenAt = nowT
-							topos(getExtractOrbitTarget(hrp.CFrame, 15))
+                        if getdis(trainingAnchor) > 8 or nowT - lastTweenAt > 0.5 then
+                            lastTweenAt = nowT
+                            topos(trainingAnchor)
                         end
                     end
                     if energy and energy.Value >= 1 then
@@ -5244,22 +5283,6 @@ function getTrialAimState()
 	end
 	return aimPoint, camera, root
 end
-
--- Camera priority + 1: the default camera script writes CurrentCamera.CFrame
--- during RenderStepped, so the old plain RenderStepped lock was overwritten every
--- frame and the skills fired wherever the free camera happened to point.
-RunService:BindToRenderStep(TRIAL_AIM_BIND_NAME, Enum.RenderPriority.Camera.Value + 1, function()
-	local aimPoint, camera, root = getTrialAimState()
-	if not aimPoint then
-		return
-	end
-	camera.CFrame = safeLookAt(camera.CFrame.Position, aimPoint)
-	-- Skills travel along the character look vector, so the body must point at
-	-- the beast in 3D: a flat rotation misses it completely from above.
-	if (aimPoint - root.Position).Magnitude > 1 then
-		root.CFrame = safeLookAt(root.Position, aimPoint)
-	end
-end)
 
 local function moveTrialMouseTo(x, y)
 	local insetX, insetY = 0, 0
