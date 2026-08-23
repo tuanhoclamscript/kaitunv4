@@ -5083,45 +5083,164 @@ function RaidLoadFruitForChip()
 				if held then
 					status("Unstored and holding: " .. held.Name)
 					return true
+-- Kiem tra xem nguoi choi co dang trong tran Raid khong (qua GUI Timer hoac dao raid)
+function RaidIsActive()
+	-- 1. Kiem tra GUI Timer tren man hinh (Time Left: MM:SS)
+	local pgui = LocalPlayer:FindFirstChild("PlayerGui")
+	if pgui then
+		for _, gui in ipairs(pgui:GetChildren()) do
+			if gui:IsA("ScreenGui") and gui.Enabled then
+				for _, desc in ipairs(gui:GetDescendants()) do
+					if desc:IsA("TextLabel") and desc.Visible and string.find(string.lower(tostring(desc.Text or "")), "time left", 1, true) then
+						return true
+					end
 				end
 			end
 		end
 	end
-
+	-- 2. Kiem tra vi tri dao raid (Island 1 -> 5)
+	local island = RaidGetCurrentIsland()
+	if island then return true end
 	return false
 end
 
--- Tim dao raid hien tai (dang "Island N" trong Locations, cach goc > 7000)
-function RaidGetCurrentIsland()
-	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if not root then return nil end
+-- Lay danh sach tat ca 5 dao cua Raid tu _WorldOrigin.Locations
+function RaidGetIslands()
+	local islands = {}
 	local origin = Workspace:FindFirstChild("_WorldOrigin")
 	local locations = origin and origin:FindFirstChild("Locations")
-	if not locations then return nil end
-	local islands = {{}, {}, {}, {}, {}}
-	for _, region in ipairs(locations:GetChildren()) do
-		local name = tostring(region.Name or "")
-		if string.find(name, "Island ", 1, true) then
-			local part = region:IsA("BasePart") and region
-				or (region:IsA("Model") and (region.PrimaryPart or region:FindFirstChildWhichIsA("BasePart")))
-			if part and (part.Position - Vector3.new(0, 0, 0)).Magnitude > 7000 then
-				local index = tonumber((name:gsub("Island ", "")))
-				if index and islands[index] then
-					table.insert(islands[index], region)
+	if locations then
+		for _, region in ipairs(locations:GetChildren()) do
+			local name = tostring(region.Name or "")
+			local num = name:match("Island%s*(%d+)") or name:match("^Island(%d+)")
+			if string.find(name, "Island", 1, true) and num then
+				local idx = tonumber(num)
+				if idx and idx >= 1 and idx <= 5 then
+					local part = region:IsA("BasePart") and region
+						or (region:IsA("Model") and (region.PrimaryPart or region:FindFirstChildWhichIsA("BasePart")))
+					if part then
+						islands[idx] = part
+					end
 				end
 			end
 		end
 	end
-	for k = 5, 1, -1 do
-		for _, region in ipairs(islands[k]) do
-			local part = region:IsA("BasePart") and region
-				or (region:IsA("Model") and (region.PrimaryPart or region:FindFirstChildWhichIsA("BasePart")))
-			if part and (part.Position - root.Position).Magnitude < 2000 then
-				return region
+	return islands
+end
+
+-- Tim dao raid gan nguoi choi nhat
+function RaidGetCurrentIsland()
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not root then return nil end
+	local islands = RaidGetIslands()
+	local nearestIsland, nearestDist = nil, math.huge
+	for idx, part in pairs(islands) do
+		local dist = (part.Position - root.Position).Magnitude
+		if dist < 2500 and dist < nearestDist then
+			nearestIsland = part
+			nearestDist = dist
+		end
+	end
+	return nearestIsland
+end
+
+-- Lay danh sach tat ca quai song trong vung Raid
+function RaidGetLivingEnemies(maxRange)
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not root then return {} end
+	local list = {}
+	local folders = {}
+	if Workspace:FindFirstChild("Enemies") then table.insert(folders, Workspace.Enemies) end
+	if Workspace:FindFirstChild("Characters") then table.insert(folders, Workspace.Characters) end
+	local origin = Workspace:FindFirstChild("_WorldOrigin")
+	if origin and origin:FindFirstChild("Enemies") then table.insert(folders, origin.Enemies) end
+
+	local maxDist = tonumber(maxRange) or 3000
+	for _, folder in ipairs(folders) do
+		for _, enemy in ipairs(folder:GetChildren()) do
+			if enemy:IsA("Model") and enemy ~= LocalPlayer.Character then
+				local hum = enemy:FindFirstChildOfClass("Humanoid")
+				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChild("Head")
+				if hum and enemyRoot and hum.Health > 0 then
+					local dist = (enemyRoot.Position - root.Position).Magnitude
+					if dist <= maxDist then
+						table.insert(list, {
+							Model = enemy,
+							Humanoid = hum,
+							Root = enemyRoot,
+							Distance = dist
+						})
+					end
+				end
 			end
 		end
 	end
-	return nil
+	table.sort(list, function(a, b) return a.Distance < b.Distance end)
+	return list
+end
+
+-- Combat tu dong clear toan bo 5 dao trong Raid
+function RaidFightAllIslands(maxDuration)
+	maxDuration = maxDuration or 600
+	local started = tick()
+	local currentIslandIndex = 1
+	local lastAdvanceCheck = 0
+
+	while tick() - started < maxDuration and RaidIsActive() do
+		local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		local playerHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if not root or not playerHum or playerHum.Health <= 0 then
+			task.wait(1)
+		else
+			TyrEnsureWeapon()
+			module:haki()
+
+			local enemies = RaidGetLivingEnemies(2500)
+			if #enemies > 0 then
+				local target = enemies[1]
+				local enemyRoot = target.Root
+				local enemyHum = target.Humanoid
+				local enemyName = target.Model.Name
+
+				status("Raid: killing " .. enemyName .. " [" .. math.floor(enemyHum.Health) .. " HP]")
+
+				local orbit = getExtractOrbitTarget(enemyRoot.CFrame, 22)
+					or CFrame.new(enemyRoot.Position + Vector3.new(0, 22, 0))
+				module:topos(orbit, 220, 0, true, true)
+
+				root.CFrame = safeLookAt(root.Position, enemyRoot.Position)
+
+				if getgenv().TyrantFastAttack then
+					pcall(getgenv().TyrantFastAttack)
+				end
+				TyrSpamMeleeSkills(enemyRoot)
+				TyrNormalAttack(0.25, enemyRoot)
+			else
+				-- Khong con quai o dao hien tai -> bay sang dao tiep theo (1 -> 5)
+				local islands = RaidGetIslands()
+				if tick() - lastAdvanceCheck > 1.5 then
+					lastAdvanceCheck = tick()
+					for i = 1, 5 do
+						if islands[i] and (islands[i].Position - root.Position).Magnitude < 1200 then
+							currentIslandIndex = math.min(5, i + 1)
+							break
+						end
+					end
+				end
+
+				local targetIsland = islands[currentIslandIndex] or islands[1]
+				if targetIsland then
+					status("Advancing to Raid Island " .. tostring(currentIslandIndex))
+					module:topos(targetIsland.CFrame + Vector3.new(0, 35, 0), 220, 0, true, true)
+				else
+					status("Waiting for raid mobs / boss spawn...")
+				end
+				task.wait(0.5)
+			end
+		end
+		task.wait(0.04)
+	end
+	module:stopTween()
 end
 
 -- Bam nut RaidSummon2 de start raid
@@ -5161,8 +5280,9 @@ function RaidFindSummonClickDetector()
 end
 
 function RaidStartSummon()
-	-- Mua chip bang remote xong phai den gan raid button de object stream vao client.
-	-- Neu check tu xa thi Boat Castle/RaidSummon2 thuong nil -> spam "not found".
+	-- Neu da o trong Raid thi khong di chuyen ve Boat Castle
+	if RaidIsActive() then return true end
+
 	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 	if not root or (root.Position - RAID_SUMMON_POS.Position).Magnitude > 180 then
 		status("Moving to raid summon")
@@ -5179,199 +5299,38 @@ function RaidStartSummon()
 	if not clickDetector then
 		return false
 	end
-	EquipTool("Special Microchip")
-	task.wait(0.2)
+	local chip = RaidCheckSpecialMicrochip()
+	if chip and chip.Parent ~= LocalPlayer.Character then
+		local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum:EquipTool(chip) end
+		task.wait(0.2)
+	end
 	fireclickdetector(clickDetector)
 	return true
 end
 
--- Cho raid start: 2 notification "raid" roi "go!", timeout 30s
+-- Cho raid start: 2 notification "raid" roi "go!", hoac nhan dien qua RaidIsActive()
 function RaidWaitForStart(timeout)
 	local started = os.time()
 	timeout = timeout or 30
 	repeat
-		task.wait(0.1)
-	until os.time() - (RaidFarming.LastRaidAlert2 or 0) < 20
-		or os.time() - started > timeout
-	repeat
-		task.wait(0.1)
-	until os.time() - (RaidFarming.LastRaidAlert or 0) < 20
-		or os.time() - started > timeout
-	RaidFarming.LastRaidAlert = 0
-	return os.time() - started <= timeout
+		if RaidIsActive() then return true end
+		task.wait(0.2)
+	until os.time() - started > timeout
+	return RaidIsActive()
 end
 
-function startTyrantFarming(targetFragments)
-	tyrantFragmentTarget = math.max(0, tonumber(targetFragments) or tyrantFragmentTarget or 10000)
-	if tyrantFarmingTask then
-		return
-	end
-	if not tyrantSetupDone then
-		tyrantSetupDone = true
-		TyrSetupRegenTracker()
-		TyrSetupBringMobs()
-		TyrLoadAttack()
-		TyrBuyDragonTalon()
-		LocalPlayer.CharacterAdded:Connect(function()
-			tyrantSpawnBound = false
-		end)
-	end
-	tyrantFarmingActive = true
-	TyrState.Farming = true
-	_G.TYRANT_FARMING = true
-	tyrantFarmingTask = task.spawn(function()
-		while tyrantFarmingActive do
-			local v4State = getV4Status(false)
-			local frags = tonumber(LocalPlayer.Data.Fragments.Value) or 0
-			if v4State.canTrial or v4State.complete or frags >= tyrantFragmentTarget then
-				break
-			end
-			local config = getgenv().TyrantConfig
-			if config.AutoBuso then
-				local c = LocalPlayer.Character
-				if c and not c:FindFirstChild("HasBuso") then
-					pcall(function()
-						CommF_:InvokeServer("Buso")
-					end)
-				end
-			end
-			local playerHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-			if not playerHum or playerHum.Health <= 0 then
-				status("Respawning before fragment farm")
-				task.wait(1)
-			else
-				TyrBindFarmSpawn()
-				local moonSuffix = (isnight() and isfullmoon()) and " | Full Moon" or ""
-				local tyrant = TyrFindTyrant()
-				if tyrant then
-					status("Fighting Tyrant for V4 fragments" .. moonSuffix)
-					TyrFarmEnemy(tyrant, true)
-				elseif (TyrAreTyrantEyesReady()) then
-					status("Breaking vases for Tyrant" .. moonSuffix)
-					TyrBreakVases()
-					tyrantLastVaseSweep = tick()
-				elseif tick() - tyrantLastVaseSweep >= vaseSweepInterval() then
-					-- Eye1/Eye2 nam trong arena, cach cho farm mob ~950 stud nen
-					-- streaming an chung: khong bao gio thay mat do tu xa. Dinh ky
-					-- bay ve arena kiem tra va dap binh.
-					tyrantLastVaseSweep = tick()
-					TyrSweepArenaForVases()
-				else
-					TyrState.CurrentMode = "MOBS"
-					TyrState.CurrentTarget = nil
-					status("Farming V4 fragments " .. tostring(frags) .. "/" .. tostring(tyrantFragmentTarget) .. moonSuffix)
-					TyrEnsureWeapon()
-					local mob = TyrGetNearestTikiMob()
-					if mob then
-						TyrFarmEnemy(mob, false)
-					else
-						-- keepNoclip=true: gi  noclip s ng khi tween v  trung t m Tiki,
-						-- tr nh b  gravity k o xu ng ngay khi  n   gi t ng c v   i m xu t ph t
-						TyrTweenTo(TIKI_CENTER, config.TweenSpeed, true)
-						TyrBindFarmSpawn()
-						task.wait(0.8)
-					end
-				end
-			end
-		end
-		-- D n noclip khi tho t farming loop
-		module:stopTween()
-		tyrantFarmingTask = nil
-		tyrantFarmingActive = false
-		TyrState.Farming = false
-		_G.TYRANT_FARMING = false
-		TyrState.CurrentMode = "STARTING"
-		invalidateV4Status()
-	end)
-end
-
--- Hook notification cua game de biet raid da start ("raid" + "go!").
--- Extract.lua dung hookfunction Notification.new; o day thay bang
--- NotificationCallBack cua getgenv neu executor ho tro, kem fallback
--- OnClientNotify hoac TextChatServer khong can thiet.
-do
-	local previous = getgenv().NotificationCallBack
-	getgenv().NotificationCallBack = function(message)
-		local text = string.lower(tostring(message or ""))
-		if text:find("go!", 1, true) then
-			RaidFarming.LastRaidAlert = os.time()
-		end
-		if text:find("raid", 1, true) then
-			RaidFarming.LastRaidAlert2 = os.time()
-		end
-		if type(previous) == "function" then
-			pcall(previous, message)
-		end
-	end
-end
-
--- Combat trong raid: giet enemies gan nhat trong dao raid
-function RaidFightIsland(island, maxDuration)
-	maxDuration = maxDuration or 60
-	local started = tick()
-	local lastIslandCheck = tick()
-	while tick() - started < maxDuration do
-		local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-		local playerHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-		if not root or not playerHum or playerHum.Health <= 0 then
-			task.wait(1)
-		else
-			local nearest, nearestDist = nil, math.huge
-			for _, folder in ipairs(TyrGetEnemyFolders()) do
-				for _, enemy in ipairs(folder:GetChildren()) do
-					local hum = enemy:FindFirstChildOfClass("Humanoid")
-					local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
-					if hum and enemyRoot and hum.Health > 0 then
-						local dist = (enemyRoot.Position - root.Position).Magnitude
-						if dist < nearestDist then
-							nearest, nearestDist = enemy, dist
-						end
-					end
-				end
-			end
-			if nearest and nearestDist < 2500 then
-				local enemyRoot = nearest:FindFirstChild("HumanoidRootPart")
-				local target = getExtractOrbitTarget(enemyRoot.CFrame, 25)
-					or CFrame.new(enemyRoot.Position + Vector3.new(0, 25, 0))
-				module:topos(target, 200, 0, true, true)
-				TyrSpamMeleeSkills(enemyRoot)
-				TyrNormalAttack(0.4, enemyRoot)
-			else
-				-- Khong con enemy: kien tri den vi tri dao
-				if tick() - lastIslandCheck > 2 then
-					lastIslandCheck = tick()
-					local part = island and (island:IsA("BasePart") and island
-						or (island:IsA("Model") and (island.PrimaryPart or island:FindFirstChildWhichIsA("BasePart"))))
-					if part then
-						module:topos(CFrame.new(part.Position + Vector3.new(0, 100, 0)), 200, 0, true, true)
-					end
-				end
-				task.wait(0.3)
-				return true -- Dao sach enemy, chuyen dao
-			end
-		end
-		task.wait(0.05)
-	end
-	module:stopTween()
-	return false
-end
-
--- Mot vong raid hoan chinh. Tra ve:
---   "farmed"  : raid chay, co the tiep tuc vong moi
---   "wait"    : cho (cooldown chip / cho fruit) nen nen farm tyrant trong luc cho
---   "retry"   : loi tam thoi, thu lai
---   "stop"    : khong the raid tiep
+-- Mot vong raid hoan chinh
 function RaidRunOnce(targetFragments)
 	local frags = tonumber(LocalPlayer.Data.Fragments.Value) or 0
 	if frags >= targetFragments then
 		return "stop"
 	end
 
-	-- Dang o dao raid? -> danh tiep
-	local island = RaidGetCurrentIsland()
-	if island then
-		status("Raid in progress - fighting island enemies")
-		RaidFightIsland(island, 90)
+	-- 1. Neu dang trong tran Raid -> danh thang tu dao 1 toi dao 5
+	if RaidIsActive() then
+		status("In Raid - clearing islands 1 to 5")
+		RaidFightAllIslands(600)
 		return "farmed"
 	end
 
@@ -5381,7 +5340,7 @@ function RaidRunOnce(targetFragments)
 		return "stop"
 	end
 
-	-- Co chip chua?
+	-- 2. Co chip chua?
 	if not RaidCheckSpecialMicrochip() then
 		local bought, err = RaidBuyChip(5)
 		if not bought then
@@ -5405,22 +5364,25 @@ function RaidRunOnce(targetFragments)
 		return "retry"
 	end
 
+	-- 3. Bat dau trieu hoi Raid
 	if not RaidStartSummon() then
 		status("Raid summon not found - retrying")
 		task.wait(1)
 		return "retry"
 	end
 
+	-- 4. Cho raid bat dau
 	if not RaidWaitForStart(30) then
-		RaidFarming.RetryAt = os.time() + 10
-		return "retry"
+		if not RaidIsActive() then
+			RaidFarming.RetryAt = os.time() + 10
+			return "retry"
+		end
 	end
 
-	status("Raid started - fighting")
-	task.wait(1)
-	island = RaidGetCurrentIsland()
-	if island then
-		RaidFightIsland(island, 90)
+	status("Raid started - fighting islands")
+	task.wait(0.5)
+	if RaidIsActive() then
+		RaidFightAllIslands(600)
 	end
 	return "farmed"
 end
