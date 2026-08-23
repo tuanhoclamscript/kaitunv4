@@ -1441,7 +1441,7 @@ function FastAttack:UseNormalClick(Character, Humanoid, Cooldown)
 		if self.CombatFlags and self.HitFunction then
 			self.HitFunction(self.EnemyRootPart, BladeHits)
 		else
-			RegisterHit:FireServer(self.EnemyRootPart, BladeHits)
+			RegisterHit:FireServer(self.EnemyRootPart, BladeHits, nil, "078da5141")
 		end
 	end
 end
@@ -1695,6 +1695,7 @@ helperSacrificeDone = false
 postTrialTransitionInProgress = false
 lastPostTrialTransitionAt = 0
 lastTrialActionAt = 0
+trialCharacterReplacedAt = 0
 local PAIR_TEMPLE_TIMEOUT = math.max(15, tonumber(getgenv().Config["Pair Temple Timeout"]) or 35)
 local stickyPairSetting = getgenv().Config["Pair Sticky Until Trial Complete"]
 if stickyPairSetting == nil then
@@ -1756,6 +1757,12 @@ function resetTrialBarrierState()
 	lastBarrierGearCheckAt = 0
 	groupTrialDoneAt = {}
 	groupTrialSeenInsideAt = {}
+	groupTrialDoneCount = 0
+	groupTrialTotalCount = 0
+	groupTrialAnyoneInsideArena = false
+	barrierProgressAt = 0
+	barrierLastDone = -1
+	trialCharacterReplacedAt = 0
 end
 resetTrialBarrierState()
 
@@ -2954,6 +2961,8 @@ function runCurrentRaceTrial(race, trialLocation)
 		return true
 	elseif race == "Human" or race == "Ghoul" then
 		AttackConfig.AutoClickEnabled = true
+		equipTrialCombatTool()
+		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 30)
 		for _, enemy in pairs(workspace.Enemies:GetChildren()) do
 			local root = enemy:FindFirstChild("HumanoidRootPart")
 			local humanoid = enemy:FindFirstChild("Humanoid")
@@ -2967,8 +2976,15 @@ function runCurrentRaceTrial(race, trialLocation)
 					module:haki()
 					root = enemy:FindFirstChild("HumanoidRootPart")
 					if root then
-						topos(root.CFrame * CFrame.new(0, 30, 0))
+						-- Extract.lua bay vong quanh muc tieu thay vi treo co dinh:
+						-- offset trong local-space cua mob lech theo huong mob nga,
+						-- va dung mot goc co dinh lam RegisterHit de bi drop.
+						local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
+						topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
 					end
+					-- FastAttack tren Stepped ban RegisterHit khong kem validator;
+					-- extractAttack() ban dung goi hit cua Extract.lua.
+					extractAttack()
 					humanoid = enemy:FindFirstChild("Humanoid")
 				until Players.LocalPlayer.Character ~= attemptCharacter
 					or not attemptCharacter.Parent
@@ -3364,6 +3380,8 @@ function refreshGroupTrialProgress()
 			done = done + 1
 		end
 	end
+	groupTrialDoneCount = done
+	groupTrialTotalCount = total
 	return done, total
 end
 
@@ -3379,6 +3397,7 @@ function isGroupTrialBarrierReached()
 			break
 		end
 	end
+	groupTrialAnyoneInsideArena = anyoneInsideArena
 	local done, total = refreshGroupTrialProgress()
 	if total > 0 and done >= total and not anyoneInsideArena then
 		return true, "all_members_done"
@@ -3414,7 +3433,17 @@ function runTrialCompletionBarrier()
 	local reached, detail = isGroupTrialBarrierReached()
 	local isHelperRole = isAlly or (isUper and not isMyUpgearTurn())
 	if not reached then
-		if tick() - trialCycleDoneAt > TRIAL_BARRIER_TIMEOUT then
+		-- Dong ho timeout chi duoc chay khi ca nhom dung im. Con nguoi trong
+		-- arena hoac vua co them thanh vien xong -> gia han; neu khong barrier
+		-- het gio giua luc nguoi khac con danh va account bay ve cua trial.
+		if barrierProgressAt <= 0
+			or (groupTrialDoneCount or 0) > (barrierLastDone or -1)
+			or groupTrialAnyoneInsideArena
+		then
+			barrierProgressAt = tick()
+			barrierLastDone = math.max(barrierLastDone or -1, groupTrialDoneCount or 0)
+		end
+		if tick() - barrierProgressAt > TRIAL_BARRIER_TIMEOUT then
 			status("Trial barrier timeout - resetting cycle")
 			resetTrialBarrierState()
 			if isUper and isMyUpgearTurn() then
@@ -3422,7 +3451,7 @@ function runTrialCompletionBarrier()
 			end
 			return
 		end
-		status("Trial done - waiting group " .. tostring(detail))
+		status("Trial done - holding in Temple, waiting group " .. tostring(detail))
 		return
 	end
 
@@ -3517,10 +3546,34 @@ task.spawn(function()
 		if trialRaceLock and trialAttemptCharacter and not trialCycleDone then
 			local currentCharacter = Players.LocalPlayer.Character
 			local humanoid = trialAttemptCharacter:FindFirstChildOfClass("Humanoid")
-			if not trialAttemptCharacter.Parent or not humanoid or humanoid.Health <= 0 then
+			-- Trial ket thuc thi game reload character, y het luc chet. Phai xet
+			-- "bi thay the" TRUOC, vi character cu bi Destroy nen check Health
+			-- cung dung. Bat retry o day se keo account ve cua trial thay vi
+			-- dung yen cho barrier.
+			local replaced = currentCharacter ~= nil and currentCharacter ~= trialAttemptCharacter
+			local died = not replaced
+				and (not trialAttemptCharacter.Parent or not humanoid or humanoid.Health <= 0)
+			if died then
+				trialCharacterReplacedAt = 0
 				resetFailedTrialAttempt("died")
-			elseif currentCharacter and currentCharacter ~= trialAttemptCharacter then
-				resetFailedTrialAttempt("respawned")
+			elseif replaced then
+				if isFFAActive() then
+					trialCharacterReplacedAt = 0
+					markOwnTrialCompleted("ffa_started")
+				elseif trialTimerSeen and not getTrialTimerVisible() then
+					-- Cho evaluateOwnTrialCompletion() (2s timer-lost) ket luan.
+					if trialCharacterReplacedAt == 0 then
+						trialCharacterReplacedAt = tick()
+					elseif tick() - trialCharacterReplacedAt > 3 then
+						trialCharacterReplacedAt = 0
+						resetFailedTrialAttempt("respawned")
+					end
+				else
+					trialCharacterReplacedAt = 0
+					resetFailedTrialAttempt("respawned")
+				end
+			else
+				trialCharacterReplacedAt = 0
 			end
 		end
 	end
