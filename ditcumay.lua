@@ -5083,6 +5083,14 @@ function RaidLoadFruitForChip()
 				if held then
 					status("Unstored and holding: " .. held.Name)
 					return true
+				end
+			end
+		end
+	end
+
+	return false
+end
+
 -- Kiem tra xem nguoi choi co dang trong tran Raid khong (qua GUI Timer hoac dao raid)
 function RaidIsActive()
 	-- 1. Kiem tra GUI Timer tren man hinh (Time Left: MM:SS)
