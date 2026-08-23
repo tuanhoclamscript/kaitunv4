@@ -174,11 +174,11 @@ getgenv().TyrantConfig = getgenv().TyrantConfig or {
 	AutoBuyDragonTalon = true,
 	AutoBuso = true,
 	TweenSpeed = 200,
-	FarmHeight = 18,
-	BossHeight = 25,
+	FarmHeight = 25,
+	BossHeight = 30,
 	AttackDistance = 105,
 	AttackDelay = 0.03,
-	BringMobs = true,
+	BringMobs = false,
 	VaseSweepInterval = 120,
 	VaseSweepDuration = 60
 }
@@ -189,7 +189,7 @@ if not getgenv().Config then
 		["ChangeBestGear"] = true,
 		["Gear"] = "A-B-B",
 		["Farm Fragments"] = {
-			autoraid = false,
+			autoraid = true,
 			autotyrant = true
 		},
 		["V3 Door Distance"] = 50,
@@ -4353,18 +4353,11 @@ function TyrFarmEnemy(enemy, isBoss)
 	end
 	TyrState.CurrentTarget = enemy
 	TyrState.CurrentMode = isBoss and "BOSS" or "MOBS"
-	-- Tyrant farm khong dung aim lock cua trial; de sot lai se lam
-	-- trialAimLookCFrame ghi de rotation cua tween.
 	_G.SHOULDSPAMSKILLS = false
 	local config = getgenv().TyrantConfig
-	local height = isBoss and config.BossHeight or config.FarmHeight
-	-- Khi BringMobs bat, mob bi teleport xuong duoi chan moi 0.1s. Neu player
-	-- con orbit quanh mob thi hai ben keo nhau chay vong vo tan va luon lech
-	-- nhau 40 stud -> attack khong bao gio dung. Dung yen tai mot anchor.
-	local bringMobsAnchor = nil
-	if not isBoss and config.BringMobs then
-		bringMobsAnchor = CFrame.new(enemyRoot.Position + Vector3.new(0, height, 0))
-	end
+	local height = isBoss and (config.BossHeight or 30) or (config.FarmHeight or 25)
+	local speed = tonumber(config.TweenSpeed) or 200
+
 	local stuckAt = tick()
 	local previousHealth = hum.Health
 	while enemy.Parent and hum.Parent and enemyRoot.Parent and hum.Health > 0 do
@@ -4373,28 +4366,38 @@ function TyrFarmEnemy(enemy, isBoss)
 		if not root or not playerHum or playerHum.Health <= 0 then
 			break
 		end
-		-- TyrEnsureWeapon co the tween sang cho ban Dragon Talon va yield 0.15s;
-		-- goi moi vong 0.05s se keo nhan vat ra khoi mob. Chi goi khi thieu tool.
+		-- Dam bao vu khi va buso haki
 		local selfCharacter = LocalPlayer.Character
 		if not (selfCharacter and selfCharacter:FindFirstChildWhichIsA("Tool")) then
 			TyrEnsureWeapon()
 		end
-		local target = bringMobsAnchor
-			or getExtractOrbitTarget(enemyRoot.CFrame, height)
-			or CFrame.new(enemyRoot.Position + Vector3.new(0, height, 0))
-		-- keepNoclip=true: giu noclip song giua cac tween, tranh giat nguoc
-		module:topos(target, config.TweenSpeed, 0, true, true)
+		module:haki()
+
+		-- Bay xung quanh tung con quai (orbit 3D) giong che do training
+		local orbitTarget = getExtractOrbitTarget(enemyRoot.CFrame, height)
+			or CFrame.new(enemyRoot.Position + Vector3.new(0, height, 0), enemyRoot.Position)
+		module:topos(orbitTarget, speed, 0, true, true)
+
+		-- Quay nhan vat ve huong quai
+		root.CFrame = safeLookAt(root.Position, enemyRoot.Position)
+
+		-- FastAttack
+		if getgenv().TyrantFastAttack then
+			pcall(getgenv().TyrantFastAttack)
+		end
+
 		if hum.Health < previousHealth then
-			previousHealth = hum.Health;
+			previousHealth = hum.Health
 			stuckAt = tick()
-		elseif tick() - stuckAt > 15 then
-			root.CFrame = target;
-			TyrNormalAttack(0.5);
+		elseif tick() - stuckAt > 10 then
+			-- Neu danh lau khong tut mau (mob ket): tele sat orbit va chem don M1
+			root.CFrame = orbitTarget
+			TyrNormalAttack(0.4, enemyRoot)
 			stuckAt = tick()
 		end
-		task.wait(0.05)
+		task.wait(0.04)
 	end
-	-- D n noclip sau khi tho t loop farm
+	-- Don noclip sau khi tieu diet xong mob
 	module:stopTween()
 	TyrState.CurrentTarget = nil
 end
@@ -4663,39 +4666,10 @@ function TyrSetupRegenTracker()
 end
 
 function TyrSetupBringMobs()
+	-- Bring mobs da duoc tat theo yeu cau, farm danh tung con va bay orbit quanh quai
 	if not getgenv().TyrantConfig.BringMobs then
 		return
 	end
-	local _bringMobsLastTick = 0
-	RunService.Heartbeat:Connect(function()
-		if TyrState.CurrentMode ~= "MOBS" then return end
-		local _now = tick()
-		if _now - _bringMobsLastTick < 0.1 then return end  -- throttle 10fps
-		_bringMobsLastTick = _now
-		local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not root then
-			return
-		end
-		for _, folder in ipairs(TyrGetEnemyFolders()) do
-			for _, enemy in ipairs(folder:GetChildren()) do
-				local hum = enemy:FindFirstChildOfClass("Humanoid")
-				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
-				if hum and enemyRoot and hum.Health > 0 and TyrIsTikiMob(enemy) then
-					local distance = (enemyRoot.Position - root.Position).Magnitude
-					if distance <= 300 then
-						pcall(function()
-							enemyRoot.CanCollide = false
-							enemyRoot.CFrame = CFrame.new(root.Position - Vector3.new(0, getgenv().TyrantConfig.FarmHeight, 0))
-							if hum:FindFirstChild("Animator") then
-								hum.Animator:Destroy()
-							end
-							sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
-						end)
-					end
-				end
-			end
-		end
-	end)
 end
 
 local tyrantFarmingActive = false
@@ -4896,29 +4870,92 @@ function RaidRefreshInventory()
 	return true
 end
 
+local UNDER_1M_FRUITS_FALLBACK = {
+	{ Name = "Rocket-Rocket", Alt = "Rocket Fruit", Price = 5000 },
+	{ Name = "Spin-Spin", Alt = "Spin Fruit", Price = 7500 },
+	{ Name = "Blade-Blade", Alt = "Blade Fruit", Price = 30000 },
+	{ Name = "Spring-Spring", Alt = "Spring Fruit", Price = 60000 },
+	{ Name = "Bomb-Bomb", Alt = "Bomb Fruit", Price = 80000 },
+	{ Name = "Smoke-Smoke", Alt = "Smoke Fruit", Price = 100000 },
+	{ Name = "Spike-Spike", Alt = "Spike Fruit", Price = 180000 },
+	{ Name = "Flame-Flame", Alt = "Flame Fruit", Price = 250000 },
+	{ Name = "Falcon-Falcon", Alt = "Falcon Fruit", Price = 300000 },
+	{ Name = "Ice-Ice", Alt = "Ice Fruit", Price = 350000 },
+	{ Name = "Sand-Sand", Alt = "Sand Fruit", Price = 420000 },
+	{ Name = "Dark-Dark", Alt = "Dark Fruit", Price = 500000 },
+	{ Name = "Diamond-Diamond", Alt = "Diamond Fruit", Price = 600000 },
+	{ Name = "Light-Light", Alt = "Light Fruit", Price = 650000 },
+	{ Name = "Rubber-Rubber", Alt = "Rubber Fruit", Price = 750000 },
+	{ Name = "Barrier-Barrier", Alt = "Barrier Fruit", Price = 800000 },
+	{ Name = "Ghost-Ghost", Alt = "Ghost Fruit", Price = 940000 },
+	{ Name = "Magma-Magma", Alt = "Magma Fruit", Price = 960000 },
+}
+
 -- Lay danh sach fruit trong inventory co gia < 1M beli, sort tang dan
 function RaidGetUnder1MFruits()
-	RaidRefreshInventory()
 	local fruits = {}
 	local seen = {}
-	for _, item in pairs(RaidFarming.Inventory) do
-		if type(item) == "table" and not seen[item] then
-			seen[item] = true
-			local rawName = item.Name or ""
-			local fruitName = normalizeRaidFruitName(rawName)
-			local value = tonumber(item.Value) or RAID_FRUIT_VALUES[fruitName] or 0
-			local count = tonumber(item.Count) or tonumber(item.Quantity) or 0
-			if fruitName ~= "" and RAID_FRUIT_VALUES[fruitName] ~= nil
-				and count > 0 and value > 0 and value < 1000000 then
-				fruits[#fruits + 1] = {
-					Name = tostring(item.Name or rawName),
-					Value = value,
-					Count = count,
-					ItemId = item.ItemId,
-				}
+
+	-- 1. Uu tien doc truc tiep tu server remote getInventoryFruits
+	pcall(function()
+		local serverFruits = CommF_:InvokeServer("getInventoryFruits")
+		if type(serverFruits) == "table" and #serverFruits > 0 then
+			for _, item in ipairs(serverFruits) do
+				local rawName = type(item) == "table" and (item.Name or item.name or "") or tostring(item)
+				local fruitName = normalizeRaidFruitName(rawName)
+				local value = type(item) == "table" and (tonumber(item.Price) or tonumber(item.Value) or tonumber(item.value) or RAID_FRUIT_VALUES[fruitName] or 0) or (RAID_FRUIT_VALUES[fruitName] or 0)
+				local count = type(item) == "table" and (tonumber(item.Count) or tonumber(item.count) or 1) or 1
+				if fruitName ~= "" and (value == 0 or value < 1000000) and not seen[fruitName] then
+					seen[fruitName] = true
+					fruits[#fruits + 1] = {
+						Name = rawName,
+						Value = value > 0 and value or (RAID_FRUIT_VALUES[fruitName] or 50000),
+						Count = count,
+					}
+				end
 			end
 		end
+	end)
+
+	-- 2. Fallback: Thu ItemReplicationService client
+	if #fruits == 0 then
+		pcall(function()
+			RaidRefreshInventory()
+			for _, item in pairs(RaidFarming.Inventory) do
+				if type(item) == "table" and not seen[item] then
+					seen[item] = true
+					local rawName = item.Name or ""
+					local fruitName = normalizeRaidFruitName(rawName)
+					local value = tonumber(item.Value) or RAID_FRUIT_VALUES[fruitName] or 0
+					local count = tonumber(item.Count) or tonumber(item.Quantity) or 0
+					if fruitName ~= "" and count > 0 and (value == 0 or value < 1000000) and not seen[fruitName] then
+						seen[fruitName] = true
+						fruits[#fruits + 1] = {
+							Name = tostring(item.Name or rawName),
+							Value = value > 0 and value or (RAID_FRUIT_VALUES[fruitName] or 50000),
+							Count = count,
+							ItemId = item.ItemId,
+						}
+					end
+				end
+			end
+		end)
 	end
+
+	-- 3. Fallback danh sach trai duoi 1M de luon co muc tieu goi LoadFruit
+	for _, fallback in ipairs(UNDER_1M_FRUITS_FALLBACK) do
+		local fName = normalizeRaidFruitName(fallback.Name)
+		if not seen[fName] then
+			seen[fName] = true
+			fruits[#fruits + 1] = {
+				Name = fallback.Name,
+				Alt = fallback.Alt,
+				Value = fallback.Price,
+				Count = 1,
+			}
+		end
+	end
+
 	table.sort(fruits, function(a, b)
 		if a.Value == b.Value then return tostring(a.Name) < tostring(b.Name) end
 		return a.Value < b.Value
@@ -4932,8 +4969,11 @@ function RaidCheckSpecialMicrochip()
 		LocalPlayer:FindFirstChildOfClass("Backpack"),
 	}) do
 		if container then
-			local chip = container:FindFirstChild("Special Microchip")
-			if chip then return chip end
+			for _, tool in ipairs(container:GetChildren()) do
+				if tool:IsA("Tool") and (tool.Name == "Special Microchip" or tool.Name:find("Microchip") or tool.Name:find("Special")) then
+					return tool
+				end
+			end
 		end
 	end
 	return nil
@@ -4984,23 +5024,28 @@ function RaidBuyChip(maxAttempts)
 	return false, "chip buy failed"
 end
 
--- Lay fruit < 1M tu inventory ra ngoai de quy doi chip. Tra ve true neu
--- cầm duoc fruit tren tay.
+-- Lay fruit < 1M tu inventory storage ra ngoai va equip len tay de quy doi chip.
 function RaidLoadFruitForChip()
-	-- Da co fruit vat ly tren tay?
-	local function getHeldFruit()
+	local function getAndEquipHeldFruit()
 		local character = LocalPlayer.Character
 		local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 		for _, container in ipairs({character, backpack}) do
 			if container then
 				for _, tool in ipairs(container:GetChildren()) do
 					if tool:IsA("Tool") then
 						local tip = string.lower(tostring(tool.ToolTip or ""))
-						local toolName = tostring(tool.Name or "")
+						local toolName = string.lower(tostring(tool.Name or ""))
 						local isFruit = tip:find("fruit", 1, true) ~= nil
-							or toolName:find("Fruit", 1, true) ~= nil
+							or toolName:find("fruit", 1, true) ~= nil
 							or tool:FindFirstChild("Fruit") ~= nil
-						if isFruit then return tool end
+						if isFruit then
+							if tool.Parent ~= character and humanoid then
+								pcall(function() humanoid:EquipTool(tool) end)
+								task.wait(0.2)
+							end
+							return tool
+						end
 					end
 				end
 			end
@@ -5008,34 +5053,41 @@ function RaidLoadFruitForChip()
 		return nil
 	end
 
-	local held = getHeldFruit()
+	-- 1. Neu da co fruit tren tay / trong backpack thi equip luon
+	local held = getAndEquipHeldFruit()
 	if held then return true end
-	if os.time() < RaidFarming.FruitRetryAt then return false end
 
+	-- 2. Quet danh sach trai duoi 1M de unstore
 	local fruits = RaidGetUnder1MFruits()
 	for _, fruit in ipairs(fruits) do
-		local loadName = RaidCleanLoadName(fruit.Name)
-		if loadName ~= "" then
-			status("Loading " .. loadName .. " (" .. formatNumber(fruit.Value) .. " beli) for chip trade")
-			pcall(function()
-				CommF_:InvokeServer("LoadFruit", loadName)
-			end)
-			task.wait(1)
-			held = getHeldFruit()
-			if held then return true end
-			-- Thu dang ten duoi "X-X Fruit" -> "X Fruit"
-			local left, right = loadName:match("^(.-)%-(.-)$")
-			if left and right and left:gsub("%s", "") == right:gsub("%s", "") then
+		local rawName = fruit.Name or ""
+		local loadName = RaidCleanLoadName(rawName)
+		local candidates = { loadName }
+		if fruit.Alt then table.insert(candidates, fruit.Alt) end
+		local left, right = loadName:match("^(.-)%-(.-)$")
+		if left and right and left:gsub("%s", "") == right:gsub("%s", "") then
+			table.insert(candidates, left .. " Fruit")
+			table.insert(candidates, left)
+		elseif not loadName:find("Fruit") then
+			table.insert(candidates, loadName .. " Fruit")
+		end
+
+		for _, candidateName in ipairs(candidates) do
+			if candidateName and candidateName ~= "" then
+				status("Unstoring fruit: [" .. candidateName .. "] for raid chip")
 				pcall(function()
-					CommF_:InvokeServer("LoadFruit", left)
+					CommF_:InvokeServer("LoadFruit", candidateName)
 				end)
-				task.wait(1)
-				held = getHeldFruit()
-				if held then return true end
+				task.wait(0.5)
+				held = getAndEquipHeldFruit()
+				if held then
+					status("Unstored and holding: " .. held.Name)
+					return true
+				end
 			end
 		end
 	end
-	RaidFarming.FruitRetryAt = os.time() + 45
+
 	return false
 end
 
@@ -5323,9 +5375,9 @@ function RaidRunOnce(targetFragments)
 		return "farmed"
 	end
 
-	-- Gate level/sea (raid chi sea 2, level >= 1300 theo Extract)
+	-- Gate level/sea (raid level >= 1100)
 	local level = tonumber(LocalPlayer.Data.Level.Value) or 0
-	if level < 1300 then
+	if level < 1100 then
 		return "stop"
 	end
 
@@ -5333,32 +5385,9 @@ function RaidRunOnce(targetFragments)
 	if not RaidCheckSpecialMicrochip() then
 		local bought, err = RaidBuyChip(5)
 		if not bought then
-			-- Mua that bai (cooldown/het beli): thu quy doi fruit < 1M
-			status("Chip buy failed (" .. tostring(err) .. ") - trying fruit trade")
+			-- Mua that bai (cooldown/het beli): unstore fruit < 1M va quy doi
+			status("Chip buy failed (" .. tostring(err) .. ") - unstoring fruit for chip")
 			if RaidLoadFruitForChip() then
-				-- Game yêu cầu physical fruit phải được EQUIPPED (cầm trên tay)
-				-- khi gọi RaidsNpc Select để bypass cooldown. LoadFruit đưa fruit
-				-- vào Backpack nhưng chưa equip → phải equip trước khi mua lại.
-				pcall(function()
-					local character = LocalPlayer.Character
-					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-					local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
-					if humanoid and backpack then
-						for _, tool in ipairs(backpack:GetChildren()) do
-							if tool:IsA("Tool") then
-								local tip = string.lower(tostring(tool.ToolTip or ""))
-								local toolName = tostring(tool.Name or "")
-								local isFruit = tip:find("fruit", 1, true) ~= nil
-									or toolName:find("Fruit", 1, true) ~= nil
-									or tool:FindFirstChild("Fruit") ~= nil
-								if isFruit then
-									humanoid:EquipTool(tool)
-									break
-								end
-							end
-						end
-					end
-				end)
 				task.wait(0.3)
 				local bought2 = RaidBuyChip(5)
 				if not bought2 then
