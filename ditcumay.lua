@@ -4709,7 +4709,9 @@ function runRaceTrainingWork(trainingState, roleLabel)
         table.insert(mobNames, name)
     end
 
-    local ATTACK_RANGE = 15  -- khoảng cách đánh
+    local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 30)
+    AttackConfig.AutoClickEnabled = true
+    equipTrialCombatTool()
 
     while not shouldStopTrainingCycle() do
         local mob = CheckMonster(table.unpack(mobNames))
@@ -4720,34 +4722,45 @@ function runRaceTrainingWork(trainingState, roleLabel)
             task.wait(0.8)
             advancePosition()
         else
-            repeat
-                task.wait()
-                module:eq()
-                module:haki()
-                pcall(function()
+            local root = mob:FindFirstChild("HumanoidRootPart")
+            local humanoid = mob:FindFirstChild("Humanoid")
+            if root and humanoid and humanoid.Health > 0 then
+                local attemptCharacter = Players.LocalPlayer.Character
+                repeat
+                    task.wait()
+                    module:eq()
+                    module:haki()
                     local currentCharacter = Players.LocalPlayer.Character
                     local energy = currentCharacter and currentCharacter:FindFirstChild("RaceEnergy")
-					local transformed = currentCharacter and currentCharacter:FindFirstChild("RaceTransformed")
-                    -- Khi đang biến hình V4 thì DỪNG đánh, bay lên cao chờ hết transform
+                    local transformed = currentCharacter and currentCharacter:FindFirstChild("RaceTransformed")
                     if transformed and transformed.Value then
                         AttackConfig.AutoClickEnabled = false
                         status(roleLabel .. " [" .. tostring(islandName) .. "] wait transform end")
-						topos(getExtractOrbitTarget(mob.HumanoidRootPart.CFrame, 150))
-                        return
+                        root = mob:FindFirstChild("HumanoidRootPart")
+                        if root then
+                            topos(getExtractOrbitTarget(root.CFrame, 150) or (root.CFrame * CFrame.new(0, 150, 0)))
+                        end
+                    else
+                        AttackConfig.AutoClickEnabled = true
+                        status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
+                        root = mob:FindFirstChild("HumanoidRootPart")
+                        if root then
+                            local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
+                            topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
+                        end
+                        if energy and energy.Value >= 1 then
+                            VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+                            VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+                        end
                     end
-                    AttackConfig.AutoClickEnabled = true
-                    status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
-                    local hrp = mob:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        topos(getExtractOrbitTarget(hrp.CFrame, ATTACK_RANGE)
-                            or (hrp.CFrame * CFrame.new(0, ATTACK_RANGE, 0)))
-                    end
-                    if energy and energy.Value >= 1 then
-                        VirtualInputManager:SendKeyEvent(true, "Y", false, game)
-                        VirtualInputManager:SendKeyEvent(false, "Y", false, game)
-                    end
-                end)
-            until not checkmob_(mob) or shouldStopTrainingCycle()
+                    humanoid = mob:FindFirstChild("Humanoid")
+                until Players.LocalPlayer.Character ~= attemptCharacter
+                    or not attemptCharacter.Parent
+                    or not attemptCharacter:FindFirstChildOfClass("Humanoid")
+                    or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
+                    or not mob.Parent or not root or not humanoid or humanoid.Health <= 0
+                    or shouldStopTrainingCycle()
+            end
         end
     end
 
