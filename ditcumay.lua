@@ -3112,97 +3112,132 @@ function runCurrentRaceTrial(race, trialLocation)
 		end
 		return true
 	elseif race == "Fishman" then
-		local seaBeasts = workspace:FindFirstChild("SeaBeasts")
-		if not seaBeasts then
-			status("Trial of Water - waiting SeaBeasts")
-			return true
-		end
 		_G.SHOULDSPAMSKILLS = false
 		_G.TRIAL_SKILL_TARGET = nil
-		local character = Players.LocalPlayer.Character
-		local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
-		local beast, bestDistance = nil, math.huge
-		for _, candidate in pairs(seaBeasts:GetChildren()) do
-			local candidateRoot = candidate:FindFirstChild("HumanoidRootPart")
-			local candidateHealth = candidate:FindFirstChild("Health")
-			if candidateRoot and candidateHealth and candidateHealth.Value > 0
-				and getdis(candidateRoot.CFrame, trialLocation.CFrame) < 1500
-			then
-				local distance = ownRoot and (ownRoot.Position - candidateRoot.Position).Magnitude or 0
-				if distance < bestDistance then
-					beast, bestDistance = candidate, distance
+
+		-- Tim Sea Beast trong tat ca cac folder kha thi
+		local function findTrialSeaBeast()
+			local character = Players.LocalPlayer.Character
+			local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
+			local candidates = {}
+			local seaBeasts = workspace:FindFirstChild("SeaBeasts")
+			if seaBeasts then
+				for _, child in ipairs(seaBeasts:GetChildren()) do
+					table.insert(candidates, child)
 				end
 			end
+			for _, folderName in ipairs({"Enemies", "Characters"}) do
+				local folder = workspace:FindFirstChild(folderName)
+				if folder then
+					for _, child in ipairs(folder:GetChildren()) do
+						local name = string.lower(tostring(child.Name or ""))
+						if name:find("seabeast") or name:find("sea beast") or name:find("water") then
+							table.insert(candidates, child)
+						end
+					end
+				end
+			end
+
+			local bestBeast, bestPart, bestHealth, bestDistance = nil, nil, 0, math.huge
+			for _, candidate in ipairs(candidates) do
+				if candidate:IsA("Model") and candidate ~= character then
+					local candidateRoot = candidate:FindFirstChild("HumanoidRootPart")
+						or candidate:FindFirstChild("Head")
+						or candidate:FindFirstChild("Torso")
+						or candidate.PrimaryPart
+						or candidate:FindFirstChildWhichIsA("BasePart")
+					local hum = candidate:FindFirstChildOfClass("Humanoid")
+					local healthVal = candidate:FindFirstChild("Health")
+					local hp = (hum and hum.Health)
+						or (healthVal and healthVal:IsA("ValueBase") and tonumber(healthVal.Value))
+						or (candidateRoot and 100000) or 0
+					if candidateRoot and hp > 0 then
+						local dist = ownRoot and (ownRoot.Position - candidateRoot.Position).Magnitude or 0
+						if dist < 3000 and dist < bestDistance then
+							bestBeast = candidate
+							bestPart = candidateRoot
+							bestHealth = hp
+							bestDistance = dist
+						end
+					end
+				end
+			end
+			return bestBeast, bestPart, bestHealth
 		end
-		if not beast then
-			status("Trial of Water - waiting Sea Beast target")
+
+		local beast, root, healthVal = findTrialSeaBeast()
+		if not beast or not root then
+			status("Trial of Water - searching Sea Beast")
+			task.wait(0.5)
 			return true
 		end
 
-		local root = beast:FindFirstChild("HumanoidRootPart")
-		local health = beast:FindFirstChild("Health")
-		if not root or not health or health.Value <= 0 then
-			return true
-		end
-		-- Bay thang len tren dau SeaBeast dung
-		-- SeaBeast.HumanoidRootPart.CFrame * CFrame.new(0, height, 0).
-		-- Khong lock camera; aimbot chi snap camera + con tro trong mot cua so
-		-- ngan quanh moi phat skill (aimAtTrialSkillTarget).
-		local hoverHeight = math.max(50, tonumber(getgenv().Config["Fish Trial Hover Height"]) or 500)
+		-- Hover 25-30 studs ngay tren dau Sea Beast de M1, FastAttack va Skill deu trung 100%
+		local hoverHeight = 28
 		local function getSeaBeastStandCFrame(targetRoot)
 			return targetRoot.CFrame * CFrame.new(0, hoverHeight, 0)
 		end
-		status("Trial of Water - moving above Sea Beast")
+
+		local character = Players.LocalPlayer.Character
+		local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
+		status("Trial of Water - locking Sea Beast")
 		local standCFrame = getSeaBeastStandCFrame(root)
 		topos(standCFrame)
+
 		character = Players.LocalPlayer.Character
 		ownRoot = character and character:FindFirstChild("HumanoidRootPart")
-		root = beast:FindFirstChild("HumanoidRootPart")
-		health = beast:FindFirstChild("Health")
-		standCFrame = root and getSeaBeastStandCFrame(root) or nil
-		if not ownRoot or not root or not standCFrame or not health or health.Value <= 0
-			or (ownRoot.Position - standCFrame.Position).Magnitude > 80
-		then
-			status("Trial of Water - retrying Sea Beast position")
+		if not ownRoot or not root then
 			return true
 		end
 
-		local tool = character:FindFirstChild("Sharkman Karate")
-			or Players.LocalPlayer.Backpack:FindFirstChild("Sharkman Karate")
-		if not tool then
-			CommF_:InvokeServer("BuySharkmanKarate")
-			tool = Players.LocalPlayer.Backpack:FindFirstChild("Sharkman Karate")
-		end
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if tool and tool.Parent == Players.LocalPlayer.Backpack and humanoid then
-			humanoid:EquipTool(tool)
-		end
+		-- Equip vu khi tot nhat
 		equipTrialCombatTool()
+		pcall(function() CommF_:InvokeServer("Buso") end)
 		_G.TRIAL_SKILL_TARGET = root
+		_G.SKILL_AIM_TARGET = root
 		_G.SHOULDSPAMSKILLS = true
-		status("Trial of Water - aiming Sea Beast, spamming skills")
 
 		local attemptCharacter = character
+		local loopCount = 0
 		repeat
-			task.wait(0.05)  -- [FIX] poll nhanh hơn để bám theo SeaBeast
-			root = beast:FindFirstChild("HumanoidRootPart")
-			health = beast:FindFirstChild("Health")
-			ownRoot = attemptCharacter and attemptCharacter:FindFirstChild("HumanoidRootPart")
-			if root then
-				_G.TRIAL_SKILL_TARGET = root  -- update target liên tục
+			task.wait(0.03)
+			loopCount = loopCount + 1
+			local currentBeast, currentRoot, currentHp = findTrialSeaBeast()
+			if currentRoot then
+				root = currentRoot
+				beast = currentBeast
+				_G.TRIAL_SKILL_TARGET = root
+				_G.SKILL_AIM_TARGET = root
+
 				standCFrame = getSeaBeastStandCFrame(root)
-				-- [FIX] threshold 100   tween k p khi SeaBeast di chuy n
-				if ownRoot and (ownRoot.Position - standCFrame.Position).Magnitude > 100 then
-					topos(standCFrame)
+				topos(standCFrame)
+
+				ownRoot = attemptCharacter and attemptCharacter:FindFirstChild("HumanoidRootPart")
+				if ownRoot then
+					ownRoot.CFrame = safeLookAt(ownRoot.Position, root.Position)
 				end
+
+				-- Xa FastAttack va danh lien tuc
+				if getgenv().TyrantFastAttack then
+					pcall(getgenv().TyrantFastAttack)
+				end
+				TyrNormalAttack(0.12, root)
+
+				if loopCount % 10 == 0 then
+					status("Trial of Water - slaying Sea Beast [" .. math.floor(currentHp) .. " HP]")
+				end
+			else
+				break
 			end
 		until Players.LocalPlayer.Character ~= attemptCharacter
 			or not attemptCharacter.Parent
 			or not attemptCharacter:FindFirstChildOfClass("Humanoid")
 			or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
-			or not beast.Parent or not root or not health or health.Value <= 0
+			or not beast.Parent
+
 		_G.SHOULDSPAMSKILLS = false
 		_G.TRIAL_SKILL_TARGET = nil
+		_G.SKILL_AIM_TARGET = nil
 		return true
 	end
 	return false
@@ -3462,10 +3497,8 @@ function isPlayerBackInTemple(plr)
 	return false
 end
 
--- A member counts as finished once it was seen inside a Trial arena (or the
--- shared V3 round opened the doors) and is back inside the Temple again.
+-- Dem so thanh vien thuc su hoan thanh trial (phai tung vao arena va da song sot ra ngoai)
 function refreshGroupTrialProgress()
-	local roundStarted = pairTrialCycleStarted or pairV3ActivatedAt > 0 or handledRoundId ~= ""
 	local done, total = 0, 0
 	local members = currentGroupMembers()
 	for _, name in ipairs(members) do
@@ -3478,28 +3511,17 @@ function refreshGroupTrialProgress()
 			local other = Players:FindFirstChild(name)
 			if other then
 				local otherCharacter = other.Character
-				local otherHumanoid = otherCharacter
-					and otherCharacter:FindFirstChildOfClass("Humanoid")
+				local otherHumanoid = otherCharacter and otherCharacter:FindFirstChildOfClass("Humanoid")
 				if isPlayerInsideAnyTrialArena(other) then
 					groupTrialSeenInsideAt[name] = tick()
 					groupTrialDoneAt[name] = nil
 				elseif groupTrialSeenInsideAt[name]
 					and tick() - groupTrialSeenInsideAt[name] > 2
+					and otherHumanoid and otherHumanoid.Health > 0
 				then
-					-- Da thay no trong arena, gio khong con -> trial cua no da
-					-- ket thuc. Khong doi isPlayerBackInTemple nua: helper tu
-					-- reset sau trial se respawn o dao spawn, khong bao gio
-					-- "back in temple" -> barrier treo vinh vien.
-					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
-				elseif roundStarted and (isPlayerBackInTemple(other)
-					or (otherHumanoid ~= nil and otherHumanoid.Health <= 0))
-				then
+					-- Da vao arena danh va song sot ra ngoai -> hoan thanh trial
 					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
 				end
-			elseif roundStarted then
-				-- Thanh vien roi server: coi nhu xong, neu khong barrier doi
-				-- mot nguoi khong con ton tai.
-				groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
 			end
 		end
 		if groupTrialDoneAt[name] then
@@ -3512,13 +3534,12 @@ function refreshGroupTrialProgress()
 end
 
 function isGroupTrialBarrierReached()
+	-- 1. Neu FFA da mo (server bat FFA trong Temple) -> ca nhom da pass
 	if isFFAActive() then
 		return true, "ffa_started"
 	end
-	-- Ki m tra n u c  b t k  ng i ch i n o trong server v n c n  ang   trong ph ng trial
-	-- Chi xet thanh vien trong nhom. Truoc day quet moi player trong server:
-	-- mot nguoi ngoai nhom dang lam trial rieng se chan barrier den khi
-	-- TRIAL_BARRIER_TIMEOUT (240s) het gio.
+
+	-- 2. Kiem tra xem co thanh vien nao dang danh trong arena khong
 	local groupMemberNames = {}
 	for _, name in ipairs(currentGroupMembers()) do
 		groupMemberNames[name] = true
@@ -3531,13 +3552,16 @@ function isGroupTrialBarrierReached()
 		end
 	end
 	groupTrialAnyoneInsideArena = anyoneInsideArena
+	if anyoneInsideArena then
+		return false, "members_fighting_in_arena"
+	end
+
+	-- 3. Kiem tra so luong thanh vien hoan thanh (phai du tat ca members)
 	local done, total = refreshGroupTrialProgress()
-	if total > 0 and done >= total and not anyoneInsideArena then
+	if total >= 2 and done >= total and not anyoneInsideArena then
 		return true, "all_members_done"
 	end
-	if trialCycleDone and not anyoneInsideArena and (total <= 1 or done >= total) then
-		return true, "all_arenas_cleared"
-	end
+
 	return false, tostring(done) .. "/" .. tostring(total)
 end
 
