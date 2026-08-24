@@ -3445,18 +3445,30 @@ function runCurrentRaceTrial(race, trialLocation)
 			-- Dung tren tam than SeaBeast (do cao tren than + nho hover an toan) truoc khi tha skill
 			local function getSeaBeastStandCFrame(targetRoot)
 				local standOffset = math.max(10, tonumber(getgenv().Config["Fish Trial Stand Offset"]) or 15)
-				local hoverHeight = math.max(25, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 35)
+				local hoverHeight = math.max(30, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 35)
 
-				-- Lay vi tri tam than hoac dau cao nhat cua Sea Beast
-				local aimPos = getTrialAimPoint(targetRoot) or targetRoot.Position
-				local model = targetRoot:IsA("Model") and targetRoot or targetRoot.Parent
-				local headPart = model and (model:FindFirstChild("Head") or model:FindFirstChild("Hitbox") or model:FindFirstChild("HumanoidRootPart"))
-				local basePos = headPart and headPart.Position or targetRoot.Position
+				-- Lay vi tri phan cao nhat cua Sea Beast (Head / Hitbox / dinh than)
+				local model = (targetRoot:IsA("Model") and targetRoot) or targetRoot.Parent
+				local highestY = targetRoot.Position.Y
+				local aimPos = targetRoot.Position
 
-				-- Tinh vi tri dung tren tam than Sea Beast (do cao hoverHeight tinh tu diem cao nhat)
-				local targetY = math.max(basePos.Y, aimPos.Y)
+				if model and model:IsA("Model") then
+					for _, part in ipairs(model:GetChildren()) do
+						if part:IsA("BasePart") then
+							if part.Position.Y > highestY then
+								highestY = part.Position.Y
+							end
+						end
+					end
+					local head = model:FindFirstChild("Head") or model:FindFirstChild("Hitbox") or model:FindFirstChild("Torso")
+					if head and head:IsA("BasePart") then
+						aimPos = head.Position
+					end
+				end
+
+				local targetY = math.max(highestY, aimPos.Y)
 				local backVec = targetRoot.CFrame.LookVector
-				local hoverPos = Vector3.new(basePos.X, targetY + hoverHeight, basePos.Z) - (backVec * standOffset)
+				local hoverPos = Vector3.new(aimPos.X, targetY + hoverHeight, aimPos.Z) - (backVec * standOffset)
 
 				return safeLookAt(hoverPos, aimPos)
 			end
@@ -3482,6 +3494,7 @@ function runCurrentRaceTrial(race, trialLocation)
 
 		local attemptCharacter = character
 		local loopCount = 0
+		setTweenNoclip(true)
 		repeat
 			task.wait(0.03)
 			loopCount = loopCount + 1
@@ -3493,18 +3506,20 @@ function runCurrentRaceTrial(race, trialLocation)
 				_G.SKILL_AIM_TARGET = root
 
 				standCFrame = getSeaBeastStandCFrame(root)
-				topos(standCFrame)
 
 				ownRoot = attemptCharacter and attemptCharacter:FindFirstChild("HumanoidRootPart")
 				if ownRoot then
-					ownRoot.CFrame = safeLookAt(ownRoot.Position, getTrialAimPoint(root) or root.Position)
+					-- Khoa chat vi tri tren khong tai standCFrame, triet tieu velocity tranh roi xuong nuoc
+					ownRoot.CFrame = standCFrame
+					ownRoot.Velocity = Vector3.zero
+					pcall(function() ownRoot.AssemblyLinearVelocity = Vector3.zero end)
 				end
 
 				-- Xa FastAttack va danh lien tuc
 				if getgenv().TyrantFastAttack then
 					pcall(getgenv().TyrantFastAttack)
 				end
-				TyrNormalAttack(0.12, root)
+				TyrNormalAttack(0.12, root, standCFrame)
 
 				if loopCount % 10 == 0 then
 					status("Trial of Water - slaying Sea Beast [" .. math.floor(currentHp) .. " HP]")
@@ -3518,6 +3533,7 @@ function runCurrentRaceTrial(race, trialLocation)
 			or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
 			or not beast.Parent
 
+		setTweenNoclip(false)
 		_G.SHOULDSPAMSKILLS = false
 		_G.TRIAL_SKILL_TARGET = nil
 		_G.SKILL_AIM_TARGET = nil
@@ -4442,7 +4458,8 @@ end
 
 -- aimPart: dat _G.SKILL_AIM_TARGET trong suot duration de moi click chuot
 -- deu ban theo huong toi muc tieu (binh/mob), quay than nhan vat (khong can thiep chuot/camera).
-function TyrNormalAttack(duration, aimPart)
+-- lockPositionCF: neu co, khoa chat vi tri khong cho nhan vat bi roi/tụt xuong nuoc trong luc danh.
+function TyrNormalAttack(duration, aimPart, lockPositionCF)
 	local char = LocalPlayer.Character
 	if not char then
 		return
@@ -4459,7 +4476,14 @@ function TyrNormalAttack(duration, aimPart)
 	end
 	local started = tick()
 	repeat
-		if hasAim then
+		if lockPositionCF and typeof(lockPositionCF) == "CFrame" then
+			if hasAim and aimPart.Parent then
+				root.CFrame = safeLookAt(lockPositionCF.Position, aimPart.Position)
+			else
+				root.CFrame = lockPositionCF
+			end
+			root.Velocity = Vector3.zero
+		elseif hasAim then
 			if not aimPart.Parent then
 				break
 			end
