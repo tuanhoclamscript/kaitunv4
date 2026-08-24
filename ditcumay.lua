@@ -2927,6 +2927,132 @@ function setTrainingSpawnPoint(target)
 	return ok
 end
 
+-- Thu thap tat ca spawn points tu _WorldOrigin lam waypoints cho smart teleport.
+-- Tra ve { {Name=string, Position=Vector3}, ... }
+function getAllSpawnWaypoints()
+	local waypoints = {}
+	local origin = Workspace:FindFirstChild("_WorldOrigin")
+	local spawns = origin and origin:FindFirstChild("PlayerSpawns")
+	if not spawns then return waypoints end
+	local seen = {}
+	for _, team in ipairs(spawns:GetChildren()) do
+		for _, spawn in ipairs(team:GetChildren()) do
+			if not seen[spawn.Name] then
+				local part = spawn:IsA("BasePart") and spawn
+					or (spawn:IsA("Model") and (spawn.PrimaryPart or spawn:FindFirstChildWhichIsA("BasePart")))
+				if part then
+					seen[spawn.Name] = true
+					table.insert(waypoints, { Name = spawn.Name, Position = part.Position })
+				end
+			end
+		end
+	end
+	return waypoints
+end
+
+-- BFS tim duong di ngan nhat tu startPos toi goalPos qua cac waypoints,
+-- moi buoc khong vuot qua maxHop studs. Tra ve danh sach waypoints (khong gom start).
+local SMART_TELE_MAX_HOP = 5000
+function findSmartTelePath(startPos, goalPos, maxHop)
+	maxHop = maxHop or SMART_TELE_MAX_HOP
+	if (startPos - goalPos).Magnitude <= maxHop then
+		return {}
+	end
+	local waypoints = getAllSpawnWaypoints()
+	for islandName, data in pairs(TrainingIslandData) do
+		local pos
+		if data.Positions then
+			pos = data.Positions[1]
+			if typeof(pos) == "CFrame" then pos = pos.Position end
+		elseif data.Position then
+			pos = data.Position
+			if typeof(pos) == "CFrame" then pos = pos.Position end
+		end
+		if pos then
+			local isDup = false
+			for _, wp in ipairs(waypoints) do
+				if (wp.Position - pos).Magnitude < 200 then isDup = true break end
+			end
+			if not isDup then
+				table.insert(waypoints, { Name = islandName, Position = pos })
+			end
+		end
+	end
+
+	local nodes = {}
+	nodes[1] = { Position = startPos, Name = "START" }
+	nodes[2] = { Position = goalPos, Name = "GOAL" }
+	for i, wp in ipairs(waypoints) do
+		nodes[i + 2] = wp
+	end
+
+	local queue = { { idx = 1, path = {} } }
+	local visited = { [1] = true }
+	local head = 0
+	while head < #queue do
+		head = head + 1
+		local current = queue[head]
+		local curPos = nodes[current.idx].Position
+		if (curPos - goalPos).Magnitude <= maxHop then
+			return current.path
+		end
+		for i, node in ipairs(nodes) do
+			if not visited[i] and i ~= 1 then
+				if (curPos - node.Position).Magnitude <= maxHop then
+					visited[i] = true
+					local newPath = {}
+					for _, p in ipairs(current.path) do
+						newPath[#newPath + 1] = p
+					end
+					newPath[#newPath + 1] = node
+					if i == 2 then
+						return newPath
+					end
+					queue[#queue + 1] = { idx = i, path = newPath }
+				end
+			end
+		end
+	end
+	return nil
+end
+
+-- Thuc hien 1 buoc reset teleport toi 1 waypoint (set spawn + tu sat + cho respawn)
+function doSingleResetHop(targetCFrame, hopLabel)
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not root or not humanoid or humanoid.Health <= 0 then return false end
+	module:stopTween()
+	if hopLabel then substatus("Reset hop → " .. tostring(hopLabel)) end
+	local spawnOk = setTrainingSpawnPoint(targetCFrame)
+	if not spawnOk then
+		root.CFrame = targetCFrame + Vector3.new(0, 6, 0)
+		task.wait(0.3)
+		pcall(function() CommF_:InvokeServer("SetSpawnPoint") end)
+		task.wait(0.2)
+	end
+	local oldCharacter = character
+	pcall(function() humanoid.Health = 0 end)
+	local deadline = tick() + 12
+	repeat
+		task.wait(0.15)
+		character = Players.LocalPlayer.Character
+	until tick() >= deadline or (character and character ~= oldCharacter
+		and character:FindFirstChild("HumanoidRootPart")
+		and character:FindFirstChildOfClass("Humanoid")
+		and character:FindFirstChildOfClass("Humanoid").Health > 0)
+	character = Players.LocalPlayer.Character
+	root = character and character:FindFirstChild("HumanoidRootPart")
+	if root then
+		local holdUntil = tick() + 0.45
+		repeat
+			root.CFrame = targetCFrame + Vector3.new(0, 6, 0)
+			RunService.Heartbeat:Wait()
+		until tick() >= holdUntil or not root.Parent
+	end
+	return true
+end
+
 function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 	local islandName = requestedIsland or assignTrainingIsland()
 	local target = getTrainingIslandTarget(islandName)
@@ -2941,11 +3067,36 @@ function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 		return false
 	end
 	module:stopTween()
+
+	local targetPos = typeof(target) == "CFrame" and target.Position or target
+	local startPos = root.Position
+	local totalDist = (startPos - targetPos).Magnitude
+
+	-- Smart teleport: neu khoang cach > 5000 thi tim duong di qua waypoints
+	if totalDist > SMART_TELE_MAX_HOP then
+		local path = findSmartTelePath(startPos, targetPos, SMART_TELE_MAX_HOP)
+		if path and #path > 0 then
+			for hopIdx, waypoint in ipairs(path) do
+				status("Smart tele hop " .. hopIdx .. "/" .. #path .. " → " .. tostring(waypoint.Name))
+				local hopCFrame = typeof(waypoint.Position) == "CFrame" and waypoint.Position
+					or CFrame.new(waypoint.Position)
+				if not doSingleResetHop(hopCFrame, waypoint.Name) then
+					status("Smart tele hop failed at " .. tostring(waypoint.Name))
+					break
+				end
+				task.wait(0.3)
+			end
+		end
+	end
+
 	status("Reset teleport to [" .. tostring(islandName) .. "]")
+	character = Players.LocalPlayer.Character
+	root = character and character:FindFirstChild("HumanoidRootPart")
+	humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not root or not humanoid or humanoid.Health <= 0 then
+		return false
+	end
 	if forceReset or getgenv().Config["Reset Teleport After Trial"] ~= false then
-		-- Phai chac Data.LastSpawnPoint da tro ve dao dich TRUOC khi chet, neu
-		-- khong server respawn ta o dao cu. Thu lai vai lan vi remote co the bi
-		-- drop khi lag.
 		local wantedSpawn = findSpawnNameNear(target.Position, 1500)
 		local spawnOk = false
 		for attempt = 1, 3 do
@@ -2958,8 +3109,6 @@ function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 			task.wait(0.4)
 		end
 		if wantedSpawn and getLastSpawnPointValue() ~= wantedSpawn then
-			-- Khong set duoc spawn: reset se giat ve dao cu, nen tween thang
-			-- toi dao dich thay vi tu sat.
 			status("Spawn point locked - tween to island instead of reset")
 			if not topos(target) then return false end
 			setTrainingSpawnPoint(target)
@@ -5417,7 +5566,7 @@ function RaidGetIslands()
 			if idx and idx >= 1 and idx <= 5 then
 				local part = region:IsA("BasePart") and region
 					or (region:IsA("Model") and (region.PrimaryPart or region:FindFirstChildWhichIsA("BasePart")))
-				if part and (part.Position - Vector3.new(0, 0, 0)).Magnitude > 5000 then
+				if part and (part.Position - Vector3.new(0, 0, 0)).Magnitude > 7000 then
 					table.insert(islandsByNum[idx], part)
 				end
 			end
@@ -5459,26 +5608,40 @@ function RaidGetIslands()
 	return resolvedIslands
 end
 
--- Tim dao raid gan nguoi choi nhat trong cluster
+-- Tim dao raid hien tai cua player: dao co so lon nhat trong ban kinh 2000 studs
 function RaidGetCurrentIsland()
 	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if not root then return nil end
+	if not root then return nil, 0 end
 	local islands = RaidGetIslands()
-	local nearestIsland, nearestDist = nil, math.huge
-	for idx, part in pairs(islands) do
-		local dist = (part.Position - root.Position).Magnitude
-		if dist < 2500 and dist < nearestDist then
-			nearestIsland = part
-			nearestDist = dist
+	for i = 5, 1, -1 do
+		if islands[i] then
+			local dist = (islands[i].Position - root.Position).Magnitude
+			if dist < 2000 then
+				return islands[i], i
+			end
 		end
 	end
-	return nearestIsland
+	return nil, 0
 end
 
 -- Bien luu tien do Wave/Dao hien tai cua Raid (1 -> 2 -> 3 -> 4 -> 5), khong bao gio tut lui
 local currentRaidWave = 1
 
--- Lay danh sach tat ca quai song tren toan bo khu vuc Raid
+-- Xac dinh dao hien tai dua vao vi tri player (khong tu tien wave)
+function RaidGetActiveWaveIsland()
+	local island, idx = RaidGetCurrentIsland()
+	if island and idx > 0 then
+		if idx > currentRaidWave then
+			currentRaidWave = idx
+		end
+		return currentRaidWave, island
+	end
+	local islands = RaidGetIslands()
+	currentRaidWave = math.clamp(currentRaidWave, 1, 5)
+	return currentRaidWave, islands[currentRaidWave]
+end
+
+-- Lay danh sach tat ca quai song gan player (trong ban kinh 1000 studs)
 function RaidGetAllEnemies()
 	local list = {}
 	local folders = {}
@@ -5494,14 +5657,16 @@ function RaidGetAllEnemies()
 				local hum = enemy:FindFirstChildOfClass("Humanoid")
 				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChild("Head")
 				if hum and enemyRoot and hum.Health > 0 then
-					local dist = root and (enemyRoot.Position - root.Position).Magnitude or 0
-					table.insert(list, {
-						Model = enemy,
-						Humanoid = hum,
-						Root = enemyRoot,
-						Distance = dist,
-						Position = enemyRoot.Position
-					})
+					local dist = root and (enemyRoot.Position - root.Position).Magnitude or 99999
+					if dist < 1000 then
+						table.insert(list, {
+							Model = enemy,
+							Humanoid = hum,
+							Root = enemyRoot,
+							Distance = dist,
+							Position = enemyRoot.Position
+						})
+					end
 				end
 			end
 		end
@@ -5510,39 +5675,11 @@ function RaidGetAllEnemies()
 	return list
 end
 
--- Xac dinh chinh xac Dao/Wave hien tai dua vao vi tri quai va tien do da qua
-function RaidGetActiveWaveIsland()
-	local islands = RaidGetIslands()
-	local allEnemies = RaidGetAllEnemies()
-
-	-- 1. Neu co quai song tren map -> quai o dao nao thi do la wave hien tai
-	if #allEnemies > 0 then
-		for _, enemyData in ipairs(allEnemies) do
-			for waveIdx = 1, 5 do
-				if islands[waveIdx] then
-					local dist = (enemyData.Position - islands[waveIdx].Position).Magnitude
-					if dist < 800 then
-						if waveIdx > currentRaidWave then
-							currentRaidWave = waveIdx
-						end
-						return currentRaidWave, islands[currentRaidWave]
-					end
-				end
-			end
-		end
-	end
-
-	-- 2. Dam bao wave luon trong khoang 1..5
-	currentRaidWave = math.clamp(currentRaidWave, 1, 5)
-	return currentRaidWave, islands[currentRaidWave]
-end
-
--- Combat tu dong clear toan bo 5 dao trong Raid theo dung thu tu 1 -> 2 -> 3 -> 4 -> 5
+-- Combat tu dong clear dao trong Raid — game tu teleport player sang dao tiep theo
 function RaidFightAllIslands(maxDuration)
 	maxDuration = maxDuration or 600
 	local started = tick()
-	local lastTargetTime = tick()
-	local lastWaveAdvance = tick()
+	currentRaidWave = 1
 
 	while tick() - started < maxDuration and RaidIsActive() do
 		local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -5553,29 +5690,19 @@ function RaidFightAllIslands(maxDuration)
 			TyrEnsureWeapon()
 			module:haki()
 
-			local waveNum, waveIsland = RaidGetActiveWaveIsland()
-			local islands = RaidGetIslands()
+			local currentIsland, waveNum = RaidGetCurrentIsland()
+			if waveNum > currentRaidWave then
+				currentRaidWave = waveNum
+			end
+
 			local allEnemies = RaidGetAllEnemies()
 			local targetEnemy = nil
 
-			-- Uu tien danh quai thuoc dao hien tai
 			if #allEnemies > 0 then
-				if waveIsland then
-					for _, e in ipairs(allEnemies) do
-						if (e.Position - waveIsland.Position).Magnitude < 1000 then
-							targetEnemy = e
-							break
-						end
-					end
-				end
-				-- Neu khong co quai tren dao hien tai nhung co quai tren map -> target quai gan nhat
-				if not targetEnemy then
-					targetEnemy = allEnemies[1]
-				end
+				targetEnemy = allEnemies[1]
 			end
 
 			if targetEnemy then
-				lastTargetTime = tick()
 				local enemyRoot = targetEnemy.Root
 				local enemyHum = targetEnemy.Humanoid
 				local enemyName = targetEnemy.Model.Name
@@ -5593,23 +5720,13 @@ function RaidFightAllIslands(maxDuration)
 				end
 				TyrNormalAttack(0.2, enemyRoot)
 			else
-				-- Da diet het quai tren dao hien tai:
-				-- Cho 1s de mob tiep theo spawn hoac tien len dao tiep theo trong cung cluster
-				if tick() - lastTargetTime > 1.2 and tick() - lastWaveAdvance > 2 then
-					lastWaveAdvance = tick()
-					if currentRaidWave < 5 then
-						currentRaidWave = currentRaidWave + 1
-					end
-				end
-
-				local targetIsland = islands[currentRaidWave] or waveIsland
-				if targetIsland then
-					status("Raid: Advancing to Island " .. tostring(currentRaidWave) .. "/5")
-					module:topos(targetIsland.CFrame + Vector3.new(0, 35, 0), 220, 0, true, true)
+				if currentIsland then
+					status("Raid Island " .. tostring(currentRaidWave) .. "/5: waiting for mobs...")
+					module:topos(currentIsland.CFrame + Vector3.new(0, 100, 0), 220, 0, true, true)
 				else
-					status("Raid: Island " .. tostring(currentRaidWave) .. "/5 - waiting for spawn...")
+					status("Raid: waiting for island teleport...")
 				end
-				task.wait(0.3)
+				task.wait(0.5)
 			end
 		end
 		task.wait(0.04)
@@ -5923,6 +6040,7 @@ function buyPendingV4Upgrade(v4State, roleLabel)
 
 	-- 1. Kiem tra xem co du fragment de mua gear/upgrade khong
 	if fragments < cost then
+		substatus("Farm F: " .. formatNumber(fragments) .. "/" .. formatNumber(cost) .. " (thiếu " .. formatNumber(cost - fragments) .. ")")
 		status(roleLabel .. " needs " .. tostring(cost - fragments) .. " more fragments to buy upgrade (" .. formatNumber(fragments) .. "/" .. formatNumber(cost) .. " F)")
 		if handleFragmentFarming(cost) then
 			return true
@@ -5937,6 +6055,7 @@ function buyPendingV4Upgrade(v4State, roleLabel)
 	if raidFarmingActive then
 		stopRaidFarming()
 	end
+	substatus("Mua gear " .. formatNumber(fragments) .. "/" .. formatNumber(cost) .. "F")
 	status(roleLabel .. " has enough fragments (" .. formatNumber(fragments) .. "/" .. formatNumber(cost) .. " F) - buying V4 upgrade")
 	local ok, bought = pcall(function()
 		return invokeUpgradeRace("Buy")
@@ -6106,6 +6225,8 @@ function runRaceTrainingWork(trainingState, roleLabel)
 
     local trainingPosition = getCurrentPos()
     if getdis(trainingPosition) >= 1500 then
+        local dist = math.floor(getdis(trainingPosition))
+        substatus("Tele → " .. tostring(islandName) .. " (" .. tostring(dist) .. " studs)")
         status(roleLabel .. " moving to [" .. tostring(islandName) .. "] for training")
         resetTeleportToTrainingIsland(true, islandName)
         isCurrentlyTraining = false
@@ -6127,6 +6248,7 @@ function runRaceTrainingWork(trainingState, roleLabel)
         local mob = CheckMonster(table.unpack(mobNames))
         if not mob then
             AttackConfig.AutoClickEnabled = true
+            substatus("[" .. tostring(islandName) .. "] chờ mob spawn")
             status(roleLabel .. " [" .. tostring(islandName) .. "] waiting for mobs...")
             topos(getCurrentPos())
             task.wait(0.8)
@@ -6145,6 +6267,7 @@ function runRaceTrainingWork(trainingState, roleLabel)
                     local transformed = currentCharacter and currentCharacter:FindFirstChild("RaceTransformed")
                     if transformed and transformed.Value then
                         AttackConfig.AutoClickEnabled = false
+                        substatus("[" .. tostring(islandName) .. "] transform active")
                         status(roleLabel .. " [" .. tostring(islandName) .. "] wait transform end")
                         root = mob:FindFirstChild("HumanoidRootPart")
                         if root then
@@ -6152,6 +6275,8 @@ function runRaceTrainingWork(trainingState, roleLabel)
                         end
                     else
                         AttackConfig.AutoClickEnabled = true
+                        local mobHp = humanoid and math.floor(humanoid.Health) or 0
+                        substatus("[" .. tostring(islandName) .. "] " .. tostring(mob.Name) .. " " .. tostring(mobHp) .. "HP")
                         status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
                         root = mob:FindFirstChild("HumanoidRootPart")
                         if root then
@@ -6185,9 +6310,20 @@ function runWaitingAccountWork()
     local roleLabel = isUper and "Main" or "Help"
     local fullMoonNow = isnight() and isfullmoon()
     local v4State = getV4Status(false)
+    local fragments = tonumber(LocalPlayer.Data.Fragments.Value) or 0
 
     -- UU TIEN #1: KIEM TRA MUA GEAR / UPGRADE & KIEM TRA FRAGMENT TRUOC TIEN
     if v4State.needsPurchase then
+        local cost = tonumber(v4State.cost) or 0
+        if cost <= 0 then
+            local fallbackCosts = { [2] = 1000, [4] = 2000, [7] = 3250, [9] = 4000 }
+            cost = fallbackCosts[tonumber(v4State.code)] or 1000
+        end
+        if fragments < cost then
+            substatus("Gear " .. formatNumber(fragments) .. "/" .. formatNumber(cost) .. "F → farm")
+        else
+            substatus("Gear " .. formatNumber(fragments) .. "/" .. formatNumber(cost) .. "F → mua")
+        end
         buyPendingV4Upgrade(v4State, roleLabel)
         return
     end
@@ -6196,7 +6332,13 @@ function runWaitingAccountWork()
     if v4State.needsTraining then
         if tyrantFarmingActive then stopTyrantFarming() end
         if raidFarmingActive then stopRaidFarming() end
-        local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
+        local remaining = v4State.remainingTraining
+        if remaining and type(remaining) == "number" then
+            substatus("Train còn " .. tostring(remaining) .. " session")
+        else
+            substatus("Training " .. tostring(v4State.key or ""))
+        end
+        local trainingState = remaining or (v4State.needsTraining and "training" or v4State.key)
         local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
         if trainingDone then invalidateV4Status() end
         return
@@ -6207,8 +6349,10 @@ function runWaitingAccountWork()
         if tyrantFarmingActive then stopTyrantFarming() end
         if raidFarmingActive then stopRaidFarming() end
         if fullMoonNow then
+            substatus("Full Moon - chờ ghép nhóm")
             status("Full Moon + trial-ready - waiting auto pair 1 Main + 2 Help")
         else
+            substatus("Chờ Full Moon")
             status("Ready for trial - waiting Full Moon and auto pair")
         end
         return
@@ -6217,12 +6361,14 @@ function runWaitingAccountWork()
     if v4State.complete then
         if tyrantFarmingActive then stopTyrantFarming() end
         if raidFarmingActive then stopRaidFarming() end
+        substatus("V4 hoàn thành")
         status("Race V4 completed - no more training needed")
         return
     end
 
     if tyrantFarmingActive then stopTyrantFarming() end
     if raidFarmingActive then stopRaidFarming() end
+    substatus("Check V4 state: " .. tostring(v4State.key or "unknown"))
     local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
     local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
     if trainingDone then
