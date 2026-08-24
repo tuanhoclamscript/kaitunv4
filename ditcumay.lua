@@ -621,6 +621,7 @@ function module:topos(target, speed, heightOffset, useNoclip, keepNoclip)
 	local duration = distance / speed
 	local startedAt = tick()
 	local reachedTarget = false
+	local lastSubUpdate = 0
 	while currentTweenId == smoothTweenId do
 		if _G.Stop then
 			break
@@ -632,6 +633,11 @@ function module:topos(target, speed, heightOffset, useNoclip, keepNoclip)
 		end
 		local progress = math.min((tick() - startedAt) / duration, 1)
 		root.CFrame = trialAimLookCFrame(startPosition:Lerp(destination, progress))
+		if tick() - lastSubUpdate >= 0.5 then
+			lastSubUpdate = tick()
+			local remDist = (destination - root.Position).Magnitude
+			substatus(string.format("Tweening (%.0fm)", remDist))
+		end
 		if progress >= 1 then
 			reachedTarget = true
 			break
@@ -947,6 +953,63 @@ end
 
 function isfullmoon()
 	return game:GetService("Lighting"):GetAttribute("MoonPhase") == 5
+end
+
+function getFullMoonTimeRemaining()
+	local moonPhase = tonumber(game:GetService("Lighting"):GetAttribute("MoonPhase"))
+	local sky = game:GetService("Lighting"):FindFirstChildOfClass("Sky")
+	local moonTexture = sky and tostring(sky.MoonTextureId) or ""
+	local isFM = (moonPhase == 5) or (moonTexture:find("970914431", 1, true) ~= nil)
+
+	local clockTime = tonumber(game:GetService("Lighting").ClockTime) or 12
+	clockTime = clockTime % 24
+	local isNight = (clockTime >= 18 or clockTime < 5)
+
+	if not isFM then
+		return {
+			isFullMoon = false,
+			isActive = false,
+			moonPhase = moonPhase or 0,
+			secondsRemaining = 0,
+			secondsToStart = 0,
+			formatted = "NO FULL MOON",
+			shortFormatted = "NO FM"
+		}
+	end
+
+	if isNight then
+		local hoursRemaining = (clockTime >= 18) and ((24 - clockTime) + 5) or (5 - clockTime)
+		local secondsRemaining = math.max(0, math.floor(hoursRemaining * 25))
+		local m = math.floor(secondsRemaining / 60)
+		local s = secondsRemaining % 60
+		local timeStr = string.format("%02d:%02d", m, s)
+		return {
+			isFullMoon = true,
+			isActive = true,
+			moonPhase = moonPhase or 5,
+			secondsRemaining = secondsRemaining,
+			secondsToStart = 0,
+			formatted = string.format("FULL MOON (Ends %s)", timeStr),
+			shortFormatted = string.format("FM (%s)", timeStr)
+		}
+	else
+		local hoursToStart = math.max(0, 18 - clockTime)
+		local secondsToStart = math.max(0, math.floor(hoursToStart * 25))
+		local totalHoursRemaining = hoursToStart + 11
+		local secondsRemaining = math.max(0, math.floor(totalHoursRemaining * 25))
+		local m = math.floor(secondsToStart / 60)
+		local s = secondsToStart % 60
+		local timeStr = string.format("%02d:%02d", m, s)
+		return {
+			isFullMoon = true,
+			isActive = false,
+			moonPhase = moonPhase or 5,
+			secondsRemaining = secondsRemaining,
+			secondsToStart = secondsToStart,
+			formatted = string.format("FULL MOON IN %s", timeStr),
+			shortFormatted = string.format("FM in %s", timeStr)
+		}
+	end
 end
 
 function getmob1(pos)
@@ -1719,6 +1782,7 @@ scheduledRoundId = ""
 handledRoundId = ""
 lastReadyWrite = 0
 currentTaskStatus = "starting"
+currentSubTask = "starting"
 pairAssignedAt = tick()
 pairAllInJobAt = tick()
 pairTempleReadyAt = 0
@@ -6853,8 +6917,8 @@ function createUI()
 	Frame.BackgroundTransparency = 0.3
 	Frame.Parent = ScreenGui
 	local Title = Instance.new("TextLabel")
-	Title.Size = UDim2.new(1, 0, 0.12, 0)
-	Title.Position = UDim2.new(0, 0, 0.10, 0)
+	Title.Size = UDim2.new(1, 0, 0.10, 0)
+	Title.Position = UDim2.new(0, 0, 0.08, 0)
 	Title.BackgroundTransparency = 1
 	Title.Text = "kaitunv4"
 	Title.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -6862,14 +6926,14 @@ function createUI()
 	Title.Font = Enum.Font.Arcade
 	Title.Parent = Frame
 	local Icon = Instance.new("ImageLabel")
-	Icon.Size = UDim2.new(0, 220, 0, 220)
-	Icon.Position = UDim2.new(0.5, -110, 0.12, 0)
+	Icon.Size = UDim2.new(0, 200, 0, 200)
+	Icon.Position = UDim2.new(0.5, -100, 0.09, 0)
 	Icon.BackgroundTransparency = 1
 	Icon.Image = "rbxassetid://"
 	Icon.Parent = Frame
 	local PlayerInfo = Instance.new("TextLabel")
-	PlayerInfo.Size = UDim2.new(1, 0, 0.055, 0)
-	PlayerInfo.Position = UDim2.new(0, 0, 0.49, 0)
+	PlayerInfo.Size = UDim2.new(1, 0, 0.048, 0)
+	PlayerInfo.Position = UDim2.new(0, 0, 0.46, 0)
 	PlayerInfo.BackgroundTransparency = 1
 	PlayerInfo.Text = "Player: Loading..."
 	PlayerInfo.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -6877,8 +6941,8 @@ function createUI()
 	PlayerInfo.Font = Enum.Font.Arcade
 	PlayerInfo.Parent = Frame
 	local FragmentInfo = Instance.new("TextLabel")
-	FragmentInfo.Size = UDim2.new(1, 0, 0.05, 0)
-	FragmentInfo.Position = UDim2.new(0, 0, 0.54, 0)
+	FragmentInfo.Size = UDim2.new(1, 0, 0.048, 0)
+	FragmentInfo.Position = UDim2.new(0, 0, 0.51, 0)
 	FragmentInfo.BackgroundTransparency = 1
 	FragmentInfo.Text = "Fragments: 0"
 	FragmentInfo.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -6886,8 +6950,8 @@ function createUI()
 	FragmentInfo.Font = Enum.Font.Arcade
 	FragmentInfo.Parent = Frame
 	local V4Info = Instance.new("TextLabel")
-	V4Info.Size = UDim2.new(0.94, 0, 0.07, 0)
-	V4Info.Position = UDim2.new(0.03, 0, 0.595, 0)
+	V4Info.Size = UDim2.new(0.94, 0, 0.060, 0)
+	V4Info.Position = UDim2.new(0.03, 0, 0.56, 0)
 	V4Info.BackgroundTransparency = 1
 	V4Info.Text = "V4: Checking..."
 	V4Info.TextColor3 = Color3.fromRGB(255, 220, 90)
@@ -6896,8 +6960,8 @@ function createUI()
 	V4Info.Font = Enum.Font.Arcade
 	V4Info.Parent = Frame
 	local Status = Instance.new("TextLabel")
-	Status.Size = UDim2.new(0.94, 0, 0.075, 0)
-	Status.Position = UDim2.new(0.03, 0, 0.67, 0)
+	Status.Size = UDim2.new(0.94, 0, 0.060, 0)
+	Status.Position = UDim2.new(0.03, 0, 0.625, 0)
 	Status.BackgroundTransparency = 1
 	Status.Text = "Status: Loading..."
 	Status.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -6905,9 +6969,19 @@ function createUI()
 	Status.TextWrapped = true
 	Status.Font = Enum.Font.Arcade
 	Status.Parent = Frame
+	local SubStatus = Instance.new("TextLabel")
+	SubStatus.Size = UDim2.new(0.94, 0, 0.052, 0)
+	SubStatus.Position = UDim2.new(0.03, 0, 0.690, 0)
+	SubStatus.BackgroundTransparency = 1
+	SubStatus.Text = "Sub: Loading..."
+	SubStatus.TextColor3 = Color3.fromRGB(150, 215, 255)
+	SubStatus.TextScaled = true
+	SubStatus.TextWrapped = true
+	SubStatus.Font = Enum.Font.Arcade
+	SubStatus.Parent = Frame
 	local JobIdBox = Instance.new("TextBox")
-	JobIdBox.Size = UDim2.new(0.46, 0, 0.065, 0)
-	JobIdBox.Position = UDim2.new(0.27, 0, 0.78, 0)
+	JobIdBox.Size = UDim2.new(0.46, 0, 0.060, 0)
+	JobIdBox.Position = UDim2.new(0.27, 0, 0.765, 0)
 	JobIdBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 	JobIdBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 	JobIdBox.PlaceholderText = "Input Job ID"
@@ -6918,29 +6992,42 @@ function createUI()
 	JobIdBox.ClearTextOnFocus = false
 	JobIdBox.Parent = Frame
 	local JoinButton = Instance.new("TextButton")
-	JoinButton.Size = UDim2.new(0.24, 0, 0.065, 0)
-	JoinButton.Position = UDim2.new(0.38, 0, 0.86, 0)
+	JoinButton.Size = UDim2.new(0.24, 0, 0.060, 0)
+	JoinButton.Position = UDim2.new(0.38, 0, 0.850, 0)
 	JoinButton.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
 	JoinButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 	JoinButton.Text = "Join Job ID"
 	JoinButton.Font = Enum.Font.Arcade
 	JoinButton.TextScaled = true
 	JoinButton.Parent = Frame
-	return ScreenGui, Status, JobIdBox, JoinButton, PlayerInfo, FragmentInfo, V4Info
+	return ScreenGui, Status, SubStatus, JobIdBox, JoinButton, PlayerInfo, FragmentInfo, V4Info
 end
 
 print("[v4] creating UI")
-local UI, StatusLabel, JobIdBox, JoinButton, PlayerInfoLabel, FragmentInfoLabel, V4InfoLabel = createUI()
+local UI, StatusLabel, SubStatusLabel, JobIdBox, JoinButton, PlayerInfoLabel, FragmentInfoLabel, V4InfoLabel = createUI()
 print("[v4] UI created - script fully loaded")
 
-function status(text)
+function status(text, sub)
 	currentTaskStatus = tostring(text or "idle")
+	if sub ~= nil then
+		currentSubTask = tostring(sub)
+	end
 	if StatusLabel then
 		StatusLabel.Text = "Status: " .. currentTaskStatus
 	end
+	if SubStatusLabel and sub ~= nil then
+		SubStatusLabel.Text = "Sub: " .. currentSubTask
+	end
 end
 
-status("idle")
+function substatus(text)
+	currentSubTask = tostring(text or "idle")
+	if SubStatusLabel then
+		SubStatusLabel.Text = "Sub: " .. currentSubTask
+	end
+end
+
+status("idle", "ready")
 
 function formatNumber(value)
 	local text = tostring(math.floor(tonumber(value) or 0))
@@ -7008,17 +7095,23 @@ task.spawn(function()
 		end)
 		local roleText = isUper and "MAIN" or (isAlly and "HELP" or "NONE")
 		local pairText = matchState and matchState.assigned and "PAIRED" or "WAITING"
-		local moonText = (isnight() and isfullmoon()) and "FULL MOON" or "NO FULL MOON"
+		local fmInfo = getFullMoonTimeRemaining()
 		local v4State = getV4Status(false)
 		if PlayerInfoLabel then
 			PlayerInfoLabel.Text = "Player: " .. USERNAME .. " | Role: " .. roleText .. " | Race: " .. tostring(race)
 		end
 		if FragmentInfoLabel then
-			FragmentInfoLabel.Text = "Fragments: " .. formatNumber(fragments) .. " | Pair: " .. pairText .. " | " .. moonText
+			FragmentInfoLabel.Text = "Fragments: " .. formatNumber(fragments) .. " | Pair: " .. pairText .. " | " .. fmInfo.formatted
 		end
 		if V4InfoLabel then
 			V4InfoLabel.Text = formatV4Info(v4State)
 			V4InfoLabel.TextColor3 = getV4StatusColor(v4State)
+		end
+		if StatusLabel then
+			StatusLabel.Text = "Status: " .. currentTaskStatus
+		end
+		if SubStatusLabel then
+			SubStatusLabel.Text = "Sub: " .. currentSubTask
 		end
 	end
 end)
@@ -7638,6 +7731,7 @@ task.spawn(function()
 				local v4State = getV4Status(false)
 				local hubStatus = getHubStatus(role, v4State)
 				local v3Fields = getV3HeartbeatFields()
+				local fmInfo = getFullMoonTimeRemaining()
 				local heartbeat = {
 					type = "HEARTBEAT",
 					sender = LocalPlayer.Name,
@@ -7650,7 +7744,13 @@ task.spawn(function()
 						v3Race = v3Fields.v3Race,
 						v3DoorDistance = v3Fields.v3DoorDistance,
 						v3GroupId = v3Fields.v3GroupId,
-						v3AbilityReady = v3Fields.v3AbilityReady
+						v3AbilityReady = v3Fields.v3AbilityReady,
+						fullMoon = fmInfo.isActive,
+						fullMoonActive = fmInfo.isActive,
+						fullMoonRemaining = fmInfo.secondsRemaining,
+						fullMoonText = fmInfo.shortFormatted,
+						task = tostring(currentTaskStatus or ""),
+						subTask = tostring(currentSubTask or "")
 					},
 					jobId = getCurrentJobId(),
 					placeId = game.PlaceId
@@ -7680,6 +7780,7 @@ task.spawn(function()
 			if socket then
 				local role = getConfiguredHubRole()
 				local v4State = getV4Status(false)
+				local fmInfo = getFullMoonTimeRemaining()
 				local heartbeat = {
 					type = "LOCAL_HEARTBEAT",
 					sender = LocalPlayer.Name,
@@ -7688,11 +7789,14 @@ task.spawn(function()
 						race = getLocalRaceName(),
 						role = role ~= "" and role or "unknown",
 						status = getHubStatus(role, v4State),
-						moon = isnight() and isfullmoon(),
+						moon = fmInfo.isActive,
+						moonRemaining = fmInfo.secondsRemaining,
+						moonText = fmInfo.shortFormatted,
 						canTrial = v4State.canTrial == true,
 						complete = v4State.complete == true,
 						fragments = getFragmentCount(),
 						task = tostring(currentTaskStatus or ""),
+						subTask = tostring(currentSubTask or ""),
 						hopReason = coordinator.lastHopReason,
 						players = #Players:GetPlayers()
 					},
