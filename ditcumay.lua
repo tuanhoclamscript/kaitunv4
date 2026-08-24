@@ -957,13 +957,18 @@ end
 
 function getFullMoonTimeRemaining()
 	local moonPhase = tonumber(game:GetService("Lighting"):GetAttribute("MoonPhase"))
-	local sky = game:GetService("Lighting"):FindFirstChildOfClass("Sky")
-	local moonTexture = sky and tostring(sky.MoonTextureId) or ""
-	local isFM = (moonPhase == 5) or (moonTexture:find("970914431", 1, true) ~= nil)
+	local isFM = (moonPhase == 5)
 
 	local clockTime = tonumber(game:GetService("Lighting").ClockTime) or 12
 	clockTime = clockTime % 24
 	local isNight = (clockTime >= 18 or clockTime < 5)
+
+	-- Fallback: dung moonTexture chi khi dang la ban dem va moonPhase chua san sang
+	if not isFM and isNight and moonPhase == nil then
+		local sky = game:GetService("Lighting"):FindFirstChildOfClass("Sky")
+		local moonTexture = sky and tostring(sky.MoonTextureId) or ""
+		isFM = (moonTexture:find("970914431", 1, true) ~= nil)
+	end
 
 	if not isFM then
 		return {
