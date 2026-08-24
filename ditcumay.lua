@@ -3790,12 +3790,7 @@ function refreshGroupTrialProgress()
 					groupTrialSeenInsideAt[name] = tick()
 					groupTrialDoneAt[name] = nil
 				elseif seenInsideAt and tick() - seenInsideAt > 4 then
-					if (otherHumanoid and otherHumanoid.Health > 0 and isPlayerBackInTemple(other))
-						or (otherHumanoid and otherHumanoid.Health <= 0)
-						or (not otherCharacter or not otherHumanoid)
-					then
-						groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
-					end
+					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
 				end
 			else
 				local seenInsideAt = groupTrialSeenInsideAt[name]
