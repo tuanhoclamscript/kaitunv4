@@ -3366,54 +3366,65 @@ function runCurrentRaceTrial(race, trialLocation)
 		_G.SHOULDSPAMSKILLS = false
 		_G.TRIAL_SKILL_TARGET = nil
 
-		-- Tim Sea Beast trong tat ca cac folder kha thi
+		-- Tim Sea Beast gan nhat theo distance (uu tien folder SeaBeasts, fallback workspace scan)
 		local function findTrialSeaBeast()
 			local character = Players.LocalPlayer.Character
 			local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
-			local candidates = {}
+			local bestBeast, bestPart, bestHealth, bestDistance = nil, nil, 0, math.huge
+
+			local function tryCandidate(candidate)
+				if not candidate:IsA("Model") or candidate == character then return end
+				local candidateRoot = candidate:FindFirstChild("HumanoidRootPart")
+					or candidate:FindFirstChild("Hitbox")
+					or candidate:FindFirstChild("Head")
+					or candidate:FindFirstChild("Torso")
+					or candidate.PrimaryPart
+					or candidate:FindFirstChildWhichIsA("BasePart")
+				if not candidateRoot then return end
+				local hum = candidate:FindFirstChildOfClass("Humanoid")
+				local healthVal = candidate:FindFirstChild("Health")
+				local hp = (hum and hum.Health)
+					or (healthVal and healthVal:IsA("ValueBase") and tonumber(healthVal.Value))
+					or 100000
+				if hp <= 0 then return end
+				local dist = ownRoot and (ownRoot.Position - candidateRoot.Position).Magnitude or 0
+				if dist < 4000 and dist < bestDistance then
+					bestBeast = candidate
+					bestPart = candidateRoot
+					bestHealth = hp
+					bestDistance = dist
+				end
+			end
+
+			-- Uu tien folder SeaBeasts chinh thuc
 			local seaBeasts = workspace:FindFirstChild("SeaBeasts")
 			if seaBeasts then
 				for _, child in ipairs(seaBeasts:GetChildren()) do
-					table.insert(candidates, child)
+					tryCandidate(child)
 				end
 			end
-			for _, folderName in ipairs({"Enemies", "Characters"}) do
-				local folder = workspace:FindFirstChild(folderName)
-				if folder then
-					for _, child in ipairs(folder:GetChildren()) do
-						local name = string.lower(tostring(child.Name or ""))
-						if name:find("seabeast") or name:find("sea beast") or name:find("water") then
-							table.insert(candidates, child)
+
+			-- Neu chua tim duoc, scan workspace top-level va cac folder phu
+			if not bestBeast then
+				for _, child in ipairs(workspace:GetChildren()) do
+					local name = string.lower(tostring(child.Name or ""))
+					if name:find("seabeast") or name:find("sea beast") or name:find("leviathan") then
+						tryCandidate(child)
+					end
+				end
+				for _, folderName in ipairs({"Enemies", "Characters", "Mobs"}) do
+					local folder = workspace:FindFirstChild(folderName)
+					if folder and not bestBeast then
+						for _, child in ipairs(folder:GetChildren()) do
+							local name = string.lower(tostring(child.Name or ""))
+							if name:find("seabeast") or name:find("sea beast") or name:find("leviathan") then
+								tryCandidate(child)
+							end
 						end
 					end
 				end
 			end
 
-			local bestBeast, bestPart, bestHealth, bestDistance = nil, nil, 0, math.huge
-			for _, candidate in ipairs(candidates) do
-				if candidate:IsA("Model") and candidate ~= character then
-						local candidateRoot = candidate:FindFirstChild("Hitbox")
-							or candidate:FindFirstChild("Head")
-							or candidate:FindFirstChild("HumanoidRootPart")
-							or candidate:FindFirstChild("Torso")
-							or candidate.PrimaryPart
-							or candidate:FindFirstChildWhichIsA("BasePart")
-					local hum = candidate:FindFirstChildOfClass("Humanoid")
-					local healthVal = candidate:FindFirstChild("Health")
-					local hp = (hum and hum.Health)
-						or (healthVal and healthVal:IsA("ValueBase") and tonumber(healthVal.Value))
-						or (candidateRoot and 100000) or 0
-					if candidateRoot and hp > 0 then
-						local dist = ownRoot and (ownRoot.Position - candidateRoot.Position).Magnitude or 0
-						if dist < 3000 and dist < bestDistance then
-							bestBeast = candidate
-							bestPart = candidateRoot
-							bestHealth = hp
-							bestDistance = dist
-						end
-					end
-				end
-			end
 			return bestBeast, bestPart, bestHealth
 		end
 
@@ -3424,12 +3435,10 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
-			local hoverHeight = math.max(40, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 45)
-			local standOffset = math.max(20, tonumber(getgenv().Config["Fish Trial Stand Offset"]) or 45)
+			-- Hover 500 studs thang len tren SeaBeast (world space) de spam an toan
 			local function getSeaBeastStandCFrame(targetRoot)
-				local back = -targetRoot.CFrame.LookVector * standOffset
-				local position = targetRoot.Position + back + Vector3.new(0, hoverHeight, 0)
-				return safeLookAt(position, getTrialAimPoint(targetRoot) or targetRoot.Position)
+				local hoverPos = targetRoot.Position + Vector3.new(0, 500, 0)
+				return safeLookAt(hoverPos, getTrialAimPoint(targetRoot) or targetRoot.Position)
 			end
 
 		local character = Players.LocalPlayer.Character
