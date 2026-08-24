@@ -2450,6 +2450,9 @@ function currentGroupMembers()
 		end
 	end
 	if matchState and matchState.assigned then
+		-- Khi da co assignment tu Hub, chi dem thanh vien thuc su cua group do.
+		-- Acc whitelist/ally khac cung server nhung khong thuoc group se lam
+		-- barrier bi ket "waiting 2/3" mai mai.
 		add(matchState.main_username)
 		for _, name in ipairs(matchState.helpers or {}) do
 			add(name)
@@ -2457,6 +2460,10 @@ function currentGroupMembers()
 		for _, name in ipairs(matchState.members or {}) do
 			add(name)
 		end
+		if Player and Player.Name then
+			add(Player.Name)
+		end
+		return members
 	end
 	if mainAccountName and mainAccountName ~= "" then
 		add(mainAccountName)
@@ -3435,10 +3442,23 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
-			-- Hover 500 studs thang len tren SeaBeast (world space) de spam an toan
+			-- Dung tren tam than SeaBeast (do cao tren than + nho hover an toan) truoc khi tha skill
 			local function getSeaBeastStandCFrame(targetRoot)
-				local hoverPos = targetRoot.Position + Vector3.new(0, 500, 0)
-				return safeLookAt(hoverPos, getTrialAimPoint(targetRoot) or targetRoot.Position)
+				local standOffset = math.max(10, tonumber(getgenv().Config["Fish Trial Stand Offset"]) or 15)
+				local hoverHeight = math.max(25, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 35)
+
+				-- Lay vi tri tam than hoac dau cao nhat cua Sea Beast
+				local aimPos = getTrialAimPoint(targetRoot) or targetRoot.Position
+				local model = targetRoot:IsA("Model") and targetRoot or targetRoot.Parent
+				local headPart = model and (model:FindFirstChild("Head") or model:FindFirstChild("Hitbox") or model:FindFirstChild("HumanoidRootPart"))
+				local basePos = headPart and headPart.Position or targetRoot.Position
+
+				-- Tinh vi tri dung tren tam than Sea Beast (do cao hoverHeight tinh tu diem cao nhat)
+				local targetY = math.max(basePos.Y, aimPos.Y)
+				local backVec = targetRoot.CFrame.LookVector
+				local hoverPos = Vector3.new(basePos.X, targetY + hoverHeight, basePos.Z) - (backVec * standOffset)
+
+				return safeLookAt(hoverPos, aimPos)
 			end
 
 		local character = Players.LocalPlayer.Character
@@ -3998,8 +4018,9 @@ task.spawn(function()
 			-- cung dung. Bat retry o day se keo account ve cua trial thay vi
 			-- dung yen cho barrier.
 			local replaced = currentCharacter ~= nil and currentCharacter ~= trialAttemptCharacter
-			local died = not replaced
-				and (not trialAttemptCharacter.Parent or not humanoid or humanoid.Health <= 0)
+			local oldDied = not trialAttemptCharacter.Parent
+				or not humanoid or humanoid.Health <= 0
+				local died = not replaced and oldDied
 			if died then
 				trialCharacterReplacedAt = 0
 				resetFailedTrialAttempt("died")
@@ -4009,7 +4030,13 @@ task.spawn(function()
 				local outsideArena = newRoot == nil or ownArena == nil
 					or (newRoot.Position - ownArena.Position).Magnitude > 1800
 				local elapsed = trialStartedAt > 0 and (tick() - trialStartedAt) or 0
-				if isFFAActive() then
+				-- Old char CHET roi moi bi thay = trial FAIL (SeaBeast gieta / roi
+				-- xuong nuoc). Game chi thay character khi trial thanh cong voi nhan
+				-- vat van con song, nen oldDied phai duoc xet truoc ffa/outside.
+				if oldDied and not isFFAActive() then
+					trialCharacterReplacedAt = 0
+					resetFailedTrialAttempt("died_in_trial")
+				elseif isFFAActive() then
 					trialCharacterReplacedAt = 0
 					markOwnTrialCompleted("ffa_started")
 				elseif outsideArena and elapsed > 8 and (trialTimerSeen or isFFAActive()) then
@@ -6982,10 +7009,11 @@ task.spawn(function()
 			if hum and hum.Health > 0 then
 				local meleeT = findToolByTip("Melee")
 				local swordT = findToolByTip("Sword")
+				local fruitT = findToolByTip("Blox Fruit")
 
-				for _, weaponTip in ipairs({"Melee", "Sword"}) do
+				for _, weaponTip in ipairs({"Melee", "Sword", "Blox Fruit"}) do
 					if not _G.SHOULDSPAMSKILLS then break end
-					local tool = weaponTip == "Melee" and meleeT or swordT
+					local tool = weaponTip == "Melee" and meleeT or (weaponTip == "Sword" and swordT or fruitT)
 					if tool then
 						local equipped = equipTool(tool)
 						if equipped then
