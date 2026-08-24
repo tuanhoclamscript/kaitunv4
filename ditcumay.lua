@@ -3068,6 +3068,30 @@ function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 	end
 	module:stopTween()
 
+	-- Neu dang o trong Temple (rat xa) -> reset 1 phat de thoat ra truoc
+	local templeDistance = (root.Position - TEMPLE_ENTRY_POSITION).Magnitude
+	if templeDistance < 3000 then
+		status("Escaping Temple → reset to default spawn first")
+		substatus("Reset thoát Temple")
+		local oldChar = character
+		pcall(function() humanoid.Health = 0 end)
+		local deadline = tick() + 12
+		repeat
+			task.wait(0.15)
+			character = Players.LocalPlayer.Character
+		until tick() >= deadline or (character and character ~= oldChar
+			and character:FindFirstChild("HumanoidRootPart")
+			and character:FindFirstChildOfClass("Humanoid")
+			and character:FindFirstChildOfClass("Humanoid").Health > 0)
+		character = Players.LocalPlayer.Character
+		root = character and character:FindFirstChild("HumanoidRootPart")
+		humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if not root or not humanoid or humanoid.Health <= 0 then
+			return false
+		end
+		task.wait(0.5)
+	end
+
 	local targetPos = typeof(target) == "CFrame" and target.Position or target
 	local startPos = root.Position
 	local totalDist = (startPos - targetPos).Magnitude
@@ -3760,11 +3784,17 @@ function refreshGroupTrialProgress()
 				if isPlayerInsideAnyTrialArena(other) then
 					groupTrialSeenInsideAt[name] = tick()
 					groupTrialDoneAt[name] = nil
-				elseif seenInsideAt
-					and tick() - seenInsideAt > 4
-					and otherHumanoid and otherHumanoid.Health > 0
-					and isPlayerBackInTemple(other)
-				then
+				elseif seenInsideAt and tick() - seenInsideAt > 4 then
+					if (otherHumanoid and otherHumanoid.Health > 0 and isPlayerBackInTemple(other))
+						or (otherHumanoid and otherHumanoid.Health <= 0)
+						or (not otherCharacter or not otherHumanoid)
+					then
+						groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
+					end
+				end
+			else
+				local seenInsideAt = groupTrialSeenInsideAt[name]
+				if seenInsideAt then
 					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
 				end
 			end
@@ -3803,7 +3833,7 @@ function isGroupTrialBarrierReached()
 
 	-- 3. Kiem tra so luong thanh vien hoan thanh (phai du tat ca members)
 	local done, total = refreshGroupTrialProgress()
-	if total >= 2 and done >= total and not anyoneInsideArena then
+	if total >= 1 and done >= total and not anyoneInsideArena then
 		return true, "all_members_done"
 	end
 
