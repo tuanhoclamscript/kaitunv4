@@ -6545,30 +6545,26 @@ task.spawn(function()
 		if not fullMoonNow then
 			pairTempleReadyAt = 0
 			lastTempleReadyCount = 0
-			local freshV4 = getV4Status(false)  -- false: dùng cache 5s, tránh blocking RemoteFunction trong hot loop
-			if freshV4.needsTraining or freshV4.needsPurchase then
-				invalidateV4Status()
+			if isInsideOwnTrial() then
+				status("Trial in progress - keeping pair until completion")
+				substatus("Hoàn thành Trial")
+			else
+				pairTrialCycleStarted = false
+				pairV3ActivatedAt = 0
+				handledRoundId = ""
+				if isUper and isMyUpgearTurn() then
+					releaseCurrentGroup("full_moon_ended")
+				else
+					status("Full Moon ended - waiting next cycle")
+				end
 				matchState.assigned = false
 				local wok, werr = pcall(runWaitingAccountWork)
 				if not wok then
 					isCurrentlyTraining = false
-					status("⚠ training err: " .. tostring(werr):sub(1, 60))
+					status("⚠ work err: " .. tostring(werr):sub(1, 60))
 				end
-				task.wait(0.2)
-				break
 			end
-			local trialCycleConfirmed = pairTrialCycleStarted
-				or pairV3ActivatedAt > 0
-				or handledRoundId ~= ""
-				or isInsideOwnTrial()
-			if trialCycleConfirmed then
-				status("Trial already started - keeping pair until completion")
-			elseif isUper and isMyUpgearTurn() and pairAssignedAt > 0 and tick() - pairAssignedAt > 2 then
-				releaseCurrentGroup("full_moon_ended")
-			else
-				status("Full Moon ended - waiting leader to release pair")
-			end
-			task.wait(1)
+			task.wait(0.5)
 			break
 		end
 		if tyrantFarmingActive then
@@ -7093,8 +7089,8 @@ function createUI()
 	Frame.BackgroundTransparency = 0.3
 	Frame.Parent = ScreenGui
 	local Title = Instance.new("TextLabel")
-	Title.Size = UDim2.new(1, 0, 0.10, 0)
-	Title.Position = UDim2.new(0, 0, 0.08, 0)
+	Title.Size = UDim2.new(1, 0, 0.08, 0)
+	Title.Position = UDim2.new(0, 0, 0.04, 0)
 	Title.BackgroundTransparency = 1
 	Title.Text = "kaitunv4"
 	Title.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -7102,14 +7098,14 @@ function createUI()
 	Title.Font = Enum.Font.Arcade
 	Title.Parent = Frame
 	local Icon = Instance.new("ImageLabel")
-	Icon.Size = UDim2.new(0, 200, 0, 200)
-	Icon.Position = UDim2.new(0.5, -100, 0.09, 0)
+	Icon.Size = UDim2.new(0, 130, 0, 130)
+	Icon.Position = UDim2.new(0.5, -65, 0.11, 0)
 	Icon.BackgroundTransparency = 1
 	Icon.Image = "rbxassetid://"
 	Icon.Parent = Frame
 	local PlayerInfo = Instance.new("TextLabel")
-	PlayerInfo.Size = UDim2.new(1, 0, 0.048, 0)
-	PlayerInfo.Position = UDim2.new(0, 0, 0.46, 0)
+	PlayerInfo.Size = UDim2.new(1, 0, 0.045, 0)
+	PlayerInfo.Position = UDim2.new(0, 0, 0.43, 0)
 	PlayerInfo.BackgroundTransparency = 1
 	PlayerInfo.Text = "Player: Loading..."
 	PlayerInfo.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -7117,8 +7113,8 @@ function createUI()
 	PlayerInfo.Font = Enum.Font.Arcade
 	PlayerInfo.Parent = Frame
 	local FragmentInfo = Instance.new("TextLabel")
-	FragmentInfo.Size = UDim2.new(1, 0, 0.048, 0)
-	FragmentInfo.Position = UDim2.new(0, 0, 0.51, 0)
+	FragmentInfo.Size = UDim2.new(1, 0, 0.045, 0)
+	FragmentInfo.Position = UDim2.new(0, 0, 0.48, 0)
 	FragmentInfo.BackgroundTransparency = 1
 	FragmentInfo.Text = "Fragments: 0"
 	FragmentInfo.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -7126,8 +7122,8 @@ function createUI()
 	FragmentInfo.Font = Enum.Font.Arcade
 	FragmentInfo.Parent = Frame
 	local V4Info = Instance.new("TextLabel")
-	V4Info.Size = UDim2.new(0.94, 0, 0.060, 0)
-	V4Info.Position = UDim2.new(0.03, 0, 0.56, 0)
+	V4Info.Size = UDim2.new(0.94, 0, 0.055, 0)
+	V4Info.Position = UDim2.new(0.03, 0, 0.53, 0)
 	V4Info.BackgroundTransparency = 1
 	V4Info.Text = "V4: Checking..."
 	V4Info.TextColor3 = Color3.fromRGB(255, 220, 90)
@@ -7136,8 +7132,8 @@ function createUI()
 	V4Info.Font = Enum.Font.Arcade
 	V4Info.Parent = Frame
 	local Status = Instance.new("TextLabel")
-	Status.Size = UDim2.new(0.94, 0, 0.060, 0)
-	Status.Position = UDim2.new(0.03, 0, 0.625, 0)
+	Status.Size = UDim2.new(0.94, 0, 0.065, 0)
+	Status.Position = UDim2.new(0.03, 0, 0.595, 0)
 	Status.BackgroundTransparency = 1
 	Status.Text = "Status: Loading..."
 	Status.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -7146,8 +7142,8 @@ function createUI()
 	Status.Font = Enum.Font.Arcade
 	Status.Parent = Frame
 	local SubStatus = Instance.new("TextLabel")
-	SubStatus.Size = UDim2.new(0.94, 0, 0.052, 0)
-	SubStatus.Position = UDim2.new(0.03, 0, 0.690, 0)
+	SubStatus.Size = UDim2.new(0.94, 0, 0.055, 0)
+	SubStatus.Position = UDim2.new(0.03, 0, 0.670, 0)
 	SubStatus.BackgroundTransparency = 1
 	SubStatus.Text = "Sub: Loading..."
 	SubStatus.TextColor3 = Color3.fromRGB(150, 215, 255)
@@ -7156,8 +7152,8 @@ function createUI()
 	SubStatus.Font = Enum.Font.Arcade
 	SubStatus.Parent = Frame
 	local JobIdBox = Instance.new("TextBox")
-	JobIdBox.Size = UDim2.new(0.46, 0, 0.060, 0)
-	JobIdBox.Position = UDim2.new(0.27, 0, 0.765, 0)
+	JobIdBox.Size = UDim2.new(0.46, 0, 0.055, 0)
+	JobIdBox.Position = UDim2.new(0.27, 0, 0.745, 0)
 	JobIdBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 	JobIdBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 	JobIdBox.PlaceholderText = "Input Job ID"
@@ -7168,8 +7164,8 @@ function createUI()
 	JobIdBox.ClearTextOnFocus = false
 	JobIdBox.Parent = Frame
 	local JoinButton = Instance.new("TextButton")
-	JoinButton.Size = UDim2.new(0.24, 0, 0.060, 0)
-	JoinButton.Position = UDim2.new(0.38, 0, 0.850, 0)
+	JoinButton.Size = UDim2.new(0.24, 0, 0.055, 0)
+	JoinButton.Position = UDim2.new(0.38, 0, 0.820, 0)
 	JoinButton.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
 	JoinButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 	JoinButton.Text = "Join Job ID"
