@@ -3367,14 +3367,19 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
-		-- Giong training repeat loop: eq + haki + orbit topos moi tick
+		-- Giong training repeat loop: orbit topos moi tick
+		-- Chi eq khi chua co tool dung loai (tranh equip lien tuc gay Sit=true block attack)
 		-- Humanoid.Sit force false moi tick de CheckStun khong block attack
 		repeat
 			task.wait()
-			module:eq()
-			module:haki()
 			local char = Players.LocalPlayer.Character
 			local ownHum = char and char:FindFirstChildOfClass("Humanoid")
+			local equippedTool = char and char:FindFirstChildOfClass("Tool")
+			local wantTip = _G.USESWORD and "Sword" or "Melee"
+			if not equippedTool or (equippedTool.ToolTip ~= "Melee" and equippedTool.ToolTip ~= "Sword") then
+				module:eq()
+			end
+			module:haki()
 			if ownHum and ownHum.Sit then ownHum.Sit = false end
 			root = mob:FindFirstChild("HumanoidRootPart")
 			humanoid = mob:FindFirstChild("Humanoid")
@@ -3382,9 +3387,6 @@ function runCurrentRaceTrial(race, trialLocation)
 				substatus(race .. " trial: " .. mob.Name .. " " .. math.floor(humanoid.Health) .. "HP")
 				status(race .. " trial - killing mob")
 				local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
-				if orbit and (orbit.Position - root.Position).Magnitude > AttackConfig.AttackDistance - 12 then
-					orbit = nil
-				end
 				topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
 			end
 		until Players.LocalPlayer.Character ~= attemptCharacter
