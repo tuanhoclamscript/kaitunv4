@@ -1717,7 +1717,7 @@ local function extractAttack()
 		RegisterAttack:FireServer(0)
 	end)
 	pcall(function()
-		RegisterHit:FireServer(firstHit, hitList, nil, "078da5141")
+		RegisterHit:FireServer(firstHit, hitList, nil, "078da341")
 	end)
 	lastExtractAttackAt = tick()
 	return true
@@ -1729,9 +1729,6 @@ getgenv().__KAITUN_EXTRACT_ATTACK = extractAttackToken
 _G.ShouldSendData = false
 local issobusy = false
 
--- Bo 2 loadstring SkibidiHub111 (Luraph obfuscated, khong audit duoc).
--- v4.lua khong phu thuoc: moi global tu chung (_G.Encode) deu co type-guard
--- + fallback, nen xoa khong anh huong chuc nang.
 print("[v4] remote hub scripts skipped")
 
 local JOB_ID = game.JobId
