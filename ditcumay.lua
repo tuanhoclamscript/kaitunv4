@@ -1353,6 +1353,12 @@ local AttackConfig = {
 	ComboResetTime = 0.3,
 	MaxCombo = 4,
 	HitboxLimbs = {
+		"Head",
+		"HumanoidRootPart",
+		"Torso",
+		"UpperTorso",
+		"Right Arm",
+		"Left Arm",
 		"RightLowerArm",
 		"RightUpperArm",
 		"LeftLowerArm",
@@ -1405,7 +1411,8 @@ function FastAttack.new()
 end
 
 function FastAttack:IsEntityAlive(entity)
-	local humanoid = entity and entity:FindFirstChild("Humanoid")
+	if not entity or not entity.Parent then return false end
+	local humanoid = entity:FindFirstChildOfClass("Humanoid") or entity:FindFirstChild("Humanoid")
 	return humanoid and humanoid.Health > 0
 end
 
@@ -1430,10 +1437,16 @@ function FastAttack:GetBladeHits(Character, Distance)
 	local BladeHits = {}
 	Distance = Distance or AttackConfig.AttackDistance
 	local function ProcessTargets(Folder)
+		if not Folder then return end
 		for _, Enemy in ipairs(Folder:GetChildren()) do
 			pcall(function()
 				if Enemy ~= Character and self:IsEntityAlive(Enemy) then
-					local BasePart = Enemy:FindFirstChild(AttackConfig.HitboxLimbs[math.random(#AttackConfig.HitboxLimbs)]) or Enemy:FindFirstChild("HumanoidRootPart")
+					local BasePart = Enemy:FindFirstChild("Head")
+						or Enemy:FindFirstChild("HumanoidRootPart")
+						or Enemy:FindFirstChild("UpperTorso")
+						or Enemy:FindFirstChild("Torso")
+						or Enemy.PrimaryPart
+						or Enemy:FindFirstChildWhichIsA("BasePart")
 					if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
 						if not self.EnemyRootPart then
 							self.EnemyRootPart = BasePart
@@ -1451,8 +1464,6 @@ function FastAttack:GetBladeHits(Character, Distance)
 	end
 	if AttackConfig.AttackMobs then
 		pcall(ProcessTargets, Workspace:WaitForChild("Enemies"))
-		-- Mob trial/arena co the nam trong _WorldOrigin.Enemies (streaming). Chi
-		-- quet Workspace.Enemies thi hit list rong -> khong co hit nao.
 		local origin = Workspace:FindFirstChild("_WorldOrigin")
 		if origin and origin:FindFirstChild("Enemies") then
 			pcall(ProcessTargets, origin.Enemies)
@@ -1541,47 +1552,26 @@ function FastAttack:GetValidator2()
 end
 
 function FastAttack:UseNormalClick(Character, Humanoid, Cooldown)
-	local position = Character:GetPivot().Position
-	local distance = AttackConfig.AttackDistance
-	local firstPart = nil
-	local hitList = {}
-
-	local function collect(folder)
-		if not folder then return end
-		for _, enemy in ipairs(folder:GetChildren()) do
-			if enemy ~= Character and self:IsEntityAlive(enemy) then
-				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChild("Head") or enemy.PrimaryPart
-				if enemyRoot and (enemyRoot.Position - position).Magnitude <= distance then
-					local hitPart = enemy:FindFirstChild("Head") or enemyRoot
-					if not firstPart then firstPart = hitPart end
-					hitList[#hitList + 1] = { enemy, enemyRoot }
-					hitList[#hitList + 1] = {}
-				end
-			end
-		end
-	end
-
-	if AttackConfig.AttackMobs then
-		collect(Workspace:FindFirstChild("Enemies"))
-		local origin = Workspace:FindFirstChild("_WorldOrigin")
-		if origin then collect(origin:FindFirstChild("Enemies")) end
-	end
-	if AttackConfig.AttackPlayers then
-		collect(Workspace:FindFirstChild("Characters"))
-	end
-
-	if not firstPart then return end
-	pcall(function()
-		RegisterAttack:FireServer(Cooldown or 0)
-	end)
-	if self.CombatFlags and self.HitFunction then
+	self.EnemyRootPart = nil
+	local BladeHits = self:GetBladeHits(Character)
+	if self.EnemyRootPart then
 		pcall(function()
-			self.HitFunction(firstPart, hitList)
+			RegisterAttack:FireServer(Cooldown or 0)
+		end)
+		if self.CombatFlags and self.HitFunction then
+			pcall(function()
+				self.HitFunction(self.EnemyRootPart, BladeHits)
+			end)
+		else
+			pcall(function()
+				RegisterHit:FireServer(self.EnemyRootPart, BladeHits, nil, "078da5141")
+			end)
+		end
+		pcall(function()
+			local tool = Character:FindFirstChildOfClass("Tool")
+			if tool then tool:Activate() end
 		end)
 	end
-	pcall(function()
-		RegisterHit:FireServer(firstPart, hitList, nil, "078da5141")
-	end)
 end
 
 function FastAttack:UseFruitM1(Character, Equipped, Combo)
@@ -3422,6 +3412,18 @@ function runCurrentRaceTrial(race, trialLocation)
 				_G.TYRANT_FARMING = false
 				pcall(function()
 					AttackInstance:Attack()
+				end)
+				-- Direct hit fallback: ban thang goi RegisterHit vao mob va activate weapon
+				pcall(function()
+					local hitPart = mob:FindFirstChild("Head") or mob:FindFirstChild("HumanoidRootPart") or root
+					if hitPart then
+						RegisterAttack:FireServer(0)
+						RegisterHit:FireServer(hitPart, {}, nil, "078da5141")
+						local tool = char and char:FindFirstChildOfClass("Tool")
+						if tool then
+							tool:Activate()
+						end
+					end
 				end)
 			end
 		until Players.LocalPlayer.Character ~= attemptCharacter
