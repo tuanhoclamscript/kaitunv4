@@ -3332,9 +3332,18 @@ function runCurrentRaceTrial(race, trialLocation)
 		return true
 	elseif race == "Human" or race == "Ghoul" then
 		AttackConfig.AutoClickEnabled = true
+		-- Vao trial ngay sau khi farm Tyrant thi _G.TYRANT_FARMING con true, vong
+		-- Stepped tu chan FastAttack:Attack() -> trial khong he attack.
+		_G.TYRANT_FARMING = false
 		equipTrialCombatTool()
-		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 30)
-		for _, enemy in pairs(workspace.Enemies:GetChildren()) do
+		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 20)
+		local trialEnemies = {}
+		for _, folder in ipairs(TyrGetEnemyFolders()) do
+			for _, enemy in ipairs(folder:GetChildren()) do
+				trialEnemies[#trialEnemies + 1] = enemy
+			end
+		end
+		for _, enemy in ipairs(trialEnemies) do
 			local root = enemy:FindFirstChild("HumanoidRootPart")
 			local humanoid = enemy:FindFirstChild("Humanoid")
 			if root and humanoid and humanoid.Health > 0
@@ -3351,11 +3360,19 @@ function runCurrentRaceTrial(race, trialLocation)
 						-- offset trong local-space cua mob lech theo huong mob nga,
 						-- va dung mot goc co dinh lam RegisterHit de bi drop.
 						local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
+						if orbit and (orbit.Position - root.Position).Magnitude
+							> AttackConfig.AttackDistance - 12
+						then
+							-- getExtractOrbitTarget snap vi tri ve luoi 10 stud nen
+							-- diem orbit co the bi day ra ~67 stud, vuot
+							-- AttackDistance 65 -> GetBladeHits rong.
+							orbit = nil
+						end
 						topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
 					end
-					-- FastAttack tren Stepped ban RegisterHit khong kem validator;
-					-- extractAttack() ban dung goi hit cua Extract.lua.
-					extractAttack()
+					-- Hit do FastAttack tren Stepped ban (da co validator o
+					-- UseNormalClick). Khong goi extractAttack() o day: hai luong
+					-- cung ban RegisterHit se bi server rate-validate va drop het.
 					humanoid = enemy:FindFirstChild("Humanoid")
 				until Players.LocalPlayer.Character ~= attemptCharacter
 					or not attemptCharacter.Parent
