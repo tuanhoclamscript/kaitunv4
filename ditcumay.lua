@@ -3326,15 +3326,11 @@ function runCurrentRaceTrial(race, trialLocation)
 		return true
 	elseif race == "Human" or race == "Ghoul" then
 		AttackConfig.AutoClickEnabled = true
-		-- Vao trial ngay sau khi farm Tyrant thi _G.TYRANT_FARMING con true, vong
-		-- Stepped tu chan FastAttack:Attack() -> trial khong he attack.
 		_G.TYRANT_FARMING = false
-		equipTrialCombatTool()
 		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 20)
-		local trialEnemies = {}
-		-- Collect enemies, retry nếu streaming chưa replicate (thường gặp khi
-		-- vừa vào arena, _WorldOrigin.Enemies chưa có đủ mob).
-		for attempt = 1, 6 do
+
+		-- Tim mob song trong arena giong training dung CheckMonster
+		local function findTrialMob()
 			for _, folder in ipairs(TyrGetEnemyFolders()) do
 				for _, enemy in ipairs(folder:GetChildren()) do
 					local root = enemy:FindFirstChild("HumanoidRootPart")
@@ -3342,56 +3338,52 @@ function runCurrentRaceTrial(race, trialLocation)
 					if root and hum and hum.Health > 0
 						and getdis(root.CFrame, trialLocation.CFrame) < 1500
 					then
-						trialEnemies[#trialEnemies + 1] = enemy
+						return enemy
 					end
 				end
 			end
-			if #trialEnemies > 0 then break end
-			status("Human/Ghoul trial - waiting for enemies to spawn (" .. attempt .. "/6)")
-			task.wait(0.5)
+			return nil
 		end
-		if #trialEnemies == 0 then
-			status("Human/Ghoul trial - no enemies found, retrying next tick")
+
+		local mob = findTrialMob()
+		if not mob then
+			status("Human/Ghoul trial - waiting for enemies to spawn")
+			task.wait(0.5)
 			return true
 		end
-		for _, enemy in ipairs(trialEnemies) do
-			local root = enemy:FindFirstChild("HumanoidRootPart")
-			local humanoid = enemy:FindFirstChild("Humanoid")
-			if root and humanoid and humanoid.Health > 0
-				and getdis(root.CFrame, trialLocation.CFrame) < 1500
-			then
-				local attemptCharacter = Players.LocalPlayer.Character
-				repeat
-					task.wait()
-					module:eq()
-					module:haki()
-					root = enemy:FindFirstChild("HumanoidRootPart")
-					if root then
-						-- Extract.lua bay vong quanh muc tieu thay vi treo co dinh:
-						-- offset trong local-space cua mob lech theo huong mob nga,
-						-- va dung mot goc co dinh lam RegisterHit de bi drop.
-						local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
-						if orbit and (orbit.Position - root.Position).Magnitude
-							> AttackConfig.AttackDistance - 12
-						then
-							-- getExtractOrbitTarget snap vi tri ve luoi 10 stud nen
-							-- diem orbit co the bi day ra ~67 stud, vuot
-							-- AttackDistance 65 -> GetBladeHits rong.
-							orbit = nil
-						end
-						topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
-					end
-					-- Hit do FastAttack tren Stepped ban (da co validator o
-					-- UseNormalClick). Khong goi extractAttack() o day: hai luong
-					-- cung ban RegisterHit se bi server rate-validate va drop het.
-					humanoid = enemy:FindFirstChild("Humanoid")
-				until Players.LocalPlayer.Character ~= attemptCharacter
-					or not attemptCharacter.Parent
-					or not attemptCharacter:FindFirstChildOfClass("Humanoid")
-					or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
-					or not enemy.Parent or not root or not humanoid or humanoid.Health <= 0
-			end
+
+		local root = mob:FindFirstChild("HumanoidRootPart")
+		local humanoid = mob:FindFirstChild("Humanoid")
+		if not root or not humanoid or humanoid.Health <= 0 then
+			return true
 		end
+
+		local attemptCharacter = Players.LocalPlayer.Character
+		equipTrialCombatTool()
+		repeat
+			task.wait()
+			-- Giong training: equip + haki moi tick
+			equipTrialCombatTool()
+			module:haki()
+			root = mob:FindFirstChild("HumanoidRootPart")
+			humanoid = mob:FindFirstChild("Humanoid")
+			if root and humanoid and humanoid.Health > 0 then
+				local mobHp = math.floor(humanoid.Health)
+				substatus(race .. " trial: " .. tostring(mob.Name) .. " " .. tostring(mobHp) .. "HP")
+				status(race .. " trial - killing mob")
+				-- Bay orbit quanh mob giong training (getExtractOrbitTarget)
+				local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
+				if orbit and (orbit.Position - root.Position).Magnitude > AttackConfig.AttackDistance - 12 then
+					orbit = nil
+				end
+				topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
+			end
+			-- Attack do FastAttack tren Stepped tu ban (giong training)
+		until Players.LocalPlayer.Character ~= attemptCharacter
+			or not attemptCharacter.Parent
+			or not attemptCharacter:FindFirstChildOfClass("Humanoid")
+			or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
+			or not mob.Parent or not root or not humanoid or humanoid.Health <= 0
 		return true
 	elseif race == "Fishman" then
 		_G.SHOULDSPAMSKILLS = false
