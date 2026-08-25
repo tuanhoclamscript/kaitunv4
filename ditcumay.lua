@@ -1556,7 +1556,9 @@ function FastAttack:UseNormalClick(Character, Humanoid, Cooldown, Combo)
 	local BladeHits = self:GetBladeHits(Character)
 	if self.EnemyRootPart then
 		pcall(function()
-			RegisterAttack:FireServer(Cooldown or 0, Combo or self.M1Combo or 1)
+			local comboIndex = Combo or self.M1Combo or 1
+				local attackCooldown = comboIndex >= (AttackConfig.MaxCombo or 4) and 0.9 or 0.4
+				RegisterAttack:FireServer(attackCooldown, comboIndex)
 		end)
 		if self.CombatFlags and self.HitFunction then
 			pcall(function()
@@ -1714,8 +1716,9 @@ local function extractAttack()
 
 	-- RegisterAttack chi can mot lan cho moi goi hit, khong phai moi target.
 	local extractCombo = AttackInstance and AttackInstance:GetCombo() or 1
+	local extractCooldown = extractCombo >= (AttackConfig.MaxCombo or 4) and 0.9 or 0.4
 	pcall(function()
-		RegisterAttack:FireServer(0, extractCombo)
+		RegisterAttack:FireServer(extractCooldown, extractCombo)
 	end)
 	pcall(function()
 		RegisterHit:FireServer(firstHit, hitList, nil, "078da5141")
@@ -4356,7 +4359,7 @@ function TyrLoadAttack()
 			tyrCombo = (tick() - tyrComboDebounce) <= resetTime and tyrCombo or 0
 			tyrCombo = tyrCombo >= maxCombo and 1 or tyrCombo + 1
 			tyrComboDebounce = tick()
-			registerAttack:FireServer(0, tyrCombo)
+			registerAttack:FireServer(tyrCombo >= maxCombo and 0.9 or 0.4, tyrCombo)
 		end)
 		pcall(function()
 			registerHit:FireServer(unpack(hitData))
