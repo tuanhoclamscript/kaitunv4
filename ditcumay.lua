@@ -1866,13 +1866,7 @@ function resetTrialBarrierState()
 	trialTimerLostAt = 0
 	trialBarrierSacrificeAt = 0
 	lastBarrierGearCheckAt = 0
-	groupTrialDoneAt = {}
-	groupTrialSeenInsideAt = {}
-	groupTrialDoneCount = 0
-	groupTrialTotalCount = 0
-	groupTrialAnyoneInsideArena = false
 	barrierProgressAt = 0
-	barrierLastDone = -1
 	trialCharacterReplacedAt = 0
 end
 resetTrialBarrierState()
@@ -3688,9 +3682,8 @@ function markOwnTrialCompleted(reason)
 	if not trialCycleDone then
 		trialCycleDone = true
 		trialCycleDoneAt = tick()
-		groupTrialDoneAt[USERNAME] = tick()
 	end
-	status("Trial completed (" .. tostring(reason or "done") .. ") - waiting for group")
+	status("Trial completed (" .. tostring(reason or "done") .. ") - holding in Temple")
 end
 
 -- The old detector treated "12 seconds without a visible timer" as a win, so a
@@ -3815,78 +3808,10 @@ function isPlayerBackInTemple(plr)
 	return false
 end
 
--- Dem so thanh vien thuc su hoan thanh trial (phai tung vao arena va da song sot ra ngoai)
-function refreshGroupTrialProgress()
-	local done, total = 0, 0
-	local members = currentGroupMembers()
-	for _, name in ipairs(members) do
-		total = total + 1
-		if name == USERNAME then
-			if trialCycleDone then
-				groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
-			end
-		else
-			local other = Players:FindFirstChild(name)
-			if other then
-				local otherCharacter = other.Character
-				local otherHumanoid = otherCharacter and otherCharacter:FindFirstChildOfClass("Humanoid")
-				local seenInsideAt = groupTrialSeenInsideAt[name]
-				if isPlayerInsideAnyTrialArena(other) then
-					groupTrialSeenInsideAt[name] = tick()
-					groupTrialDoneAt[name] = nil
-				elseif seenInsideAt and tick() - seenInsideAt > 4 then
-					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
-				end
-			else
-				local seenInsideAt = groupTrialSeenInsideAt[name]
-				if seenInsideAt then
-					groupTrialDoneAt[name] = groupTrialDoneAt[name] or tick()
-				end
-			end
-		end
-		if groupTrialDoneAt[name] then
-			done = done + 1
-		end
-	end
-	groupTrialDoneCount = done
-	groupTrialTotalCount = total
-	return done, total
-end
-
-function isGroupTrialBarrierReached()
-	-- 1. Neu FFA da mo (server bat FFA trong Temple) -> ca nhom da pass
-	if isFFAActive() then
-		return true, "ffa_started"
-	end
-
-	-- 2. Kiem tra xem co thanh vien nao dang danh trong arena khong
-	local groupMemberNames = {}
-	for _, name in ipairs(currentGroupMembers()) do
-		groupMemberNames[name] = true
-	end
-	local anyoneInsideArena = false
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= Player and groupMemberNames[p.Name] and isPlayerInsideAnyTrialArena(p) then
-			anyoneInsideArena = true
-			break
-		end
-	end
-	groupTrialAnyoneInsideArena = anyoneInsideArena
-	if anyoneInsideArena then
-		return false, "members_fighting_in_arena"
-	end
-
-	-- 3. Kiem tra so luong thanh vien hoan thanh (phai du tat ca members)
-	local done, total = refreshGroupTrialProgress()
-	if total >= 1 and done >= total and not anyoneInsideArena then
-		return true, "all_members_done"
-	end
-
-	return false, tostring(done) .. "/" .. tostring(total)
-end
-
--- Finished Trial -> wait inside the Temple -> once everybody finished, Helpers
--- reset their character so the Main is the last one alive and takes the gear.
+-- Finished Trial -> wait inside the Temple -> FFA signal arrives when all
+-- members pass, then Helpers reset so the Main survives and takes the gear.
+-- Group-member tracking is intentionally removed: the FFA flag is the
+-- authoritative "everyone done" signal emitted by the game server itself.
 function runTrialCompletionBarrier()
 	if not trialCycleDone then
 		return
@@ -3908,6 +3833,7 @@ function runTrialCompletionBarrier()
 	if not root or not humanoid or humanoid.Health <= 0 then
 		return
 	end
+	-- Stay near Temple while waiting for FFA
 	if (root.Position - TEMPLE_ENTRY_POSITION).Magnitude > 3000 then
 		pcall(function()
 			CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POSITION)
@@ -3918,33 +3844,30 @@ function runTrialCompletionBarrier()
 		end)
 	end
 
-	local reached, detail = isGroupTrialBarrierReached()
+	local ffaActive = isFFAActive()
 	local isHelperRole = isAlly or (isUper and not isMyUpgearTurn())
-	if not reached then
-		-- Dong ho timeout chi duoc chay khi ca nhom dung im. Con nguoi trong
-		-- arena hoac vua co them thanh vien xong -> gia han; neu khong barrier
-		-- het gio giua luc nguoi khac con danh va account bay ve cua trial.
-		if barrierProgressAt <= 0
-			or (groupTrialDoneCount or 0) > (barrierLastDone or -1)
-			or groupTrialAnyoneInsideArena
-		then
+
+	if not ffaActive then
+		-- Keep the timeout clock ticking; reset it only when we first start waiting
+		if barrierProgressAt <= 0 then
 			barrierProgressAt = tick()
-			barrierLastDone = math.max(barrierLastDone or -1, groupTrialDoneCount or 0)
 		end
+		local waiting = math.floor(tick() - barrierProgressAt)
 		if tick() - barrierProgressAt > TRIAL_BARRIER_TIMEOUT then
-			status("Trial barrier timeout - gear not claimed, resetting for next trial")
+			status("Trial barrier timeout - resetting for next trial")
 			resetTrialBarrierState()
 			return
 		end
-		status("Trial done - holding in Temple, waiting group " .. tostring(detail))
+		status("Trial done - holding in Temple, waiting FFA signal (" .. tostring(waiting) .. "s)")
 		return
 	end
 
+	-- FFA is active: Helpers reset, Main claims gear
 	if isHelperRole then
 		if not helperSacrificeDone then
 			if trialBarrierSacrificeAt == 0 then
 				trialBarrierSacrificeAt = tick() + 1.5
-				status("Group finished - Helper resetting for Main")
+				status("FFA started - Helper resetting for Main")
 				return
 			end
 			if tick() < trialBarrierSacrificeAt then
@@ -3952,15 +3875,9 @@ function runTrialCompletionBarrier()
 			end
 			helperSacrificeDone = true
 			trialBarrierSacrificeAt = 0
-			pcall(function()
-				character:BreakJoints()
-			end)
-			pcall(function()
-				humanoid.Health = 0
-			end)
-			pcall(function()
-				humanoid:ChangeState(Enum.HumanoidStateType.Dead)
-			end)
+			pcall(function() character:BreakJoints() end)
+			pcall(function() humanoid.Health = 0 end)
+			pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Dead) end)
 			status("Helper reset - Main takes the gear")
 			return
 		end
@@ -3971,33 +3888,28 @@ function runTrialCompletionBarrier()
 		return
 	end
 
-	if isFFAActive() then
-		AttackConfig.AutoClickEnabled = true
-		local nearest, nearestDistance = nil, math.huge
-		for other in pairs(getplayers(true)) do
-			local otherRoot = other:FindFirstChild("HumanoidRootPart")
-			if otherRoot then
-				local distance = (otherRoot.Position - root.Position).Magnitude
-				if distance < nearestDistance then
-					nearest, nearestDistance = otherRoot, distance
-				end
+	-- Main: fight FFA if opponents remain, then claim gear
+	AttackConfig.AutoClickEnabled = true
+	local nearest, nearestDistance = nil, math.huge
+	for other in pairs(getplayers(true)) do
+		local otherRoot = other:FindFirstChild("HumanoidRootPart")
+		if otherRoot then
+			local distance = (otherRoot.Position - root.Position).Magnitude
+			if distance < nearestDistance then
+				nearest, nearestDistance = otherRoot, distance
 			end
 		end
-		if nearest then
-			status("FFA - Main clearing the arena")
-			pcall(function()
-				topos(nearest.CFrame * CFrame.new(0, 3, 0))
-			end)
-			return
-		end
 	end
-	status("Group finished - Main claiming gear at Ancient Clock")
+	if nearest then
+		status("FFA - Main clearing the arena")
+		pcall(function() topos(nearest.CFrame * CFrame.new(0, 3, 0)) end)
+		return
+	end
+	status("FFA cleared - Main claiming gear at Ancient Clock")
 	if tick() - lastBarrierGearCheckAt >= 1.5 then
 		lastBarrierGearCheckAt = tick()
 		local claimed = false
-		pcall(function()
-			claimed = checkgear()
-		end)
+		pcall(function() claimed = checkgear() end)
 		if claimed then
 			status("Gear claimed successfully! Trial complete.")
 			invalidateV4Status()
@@ -4012,15 +3924,8 @@ end
 local trialWorkerToken = {}
 getgenv().__KAITUN_TRIAL_WORKER = trialWorkerToken
 task.spawn(function()
-	local nextGroupScanAt = 0
 	while getgenv().__KAITUN_TRIAL_WORKER == trialWorkerToken and task.wait(0.1) do
 		pcall(tryRunOwnRaceTrial)
-		-- Watch the other members while we fight: a member seen inside its arena
-		-- and later back in the Temple has finished its own Trial.
-		if tick() >= nextGroupScanAt then
-			nextGroupScanAt = tick() + 0.5
-			pcall(refreshGroupTrialProgress)
-		end
 	end
 end)
 
