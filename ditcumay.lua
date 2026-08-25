@@ -3503,8 +3503,17 @@ function runCurrentRaceTrial(race, trialLocation)
 						or enemy.PrimaryPart
 					humanoid = enemy:FindFirstChildOfClass("Humanoid")
 					if enemyRoot then
-						topos(getExtractOrbitTarget(enemyRoot.CFrame, orbitHeight)
-							or (enemyRoot.CFrame * CFrame.new(0, orbitHeight, 0)))
+						-- Gan mob 10-20 studs: bay den mat truoc con quai chu khong bay vong quanh.
+						local char = Players.LocalPlayer.Character
+						local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+						local standDist = 10 + (tick() * 20) % 10
+						if myRoot and enemyRoot.Parent then
+							pcall(function()
+								local offset = enemyRoot.CFrame.LookVector * standDist
+									+ Vector3.new(0, 5, 0)
+								myRoot.CFrame = CFrame.new(enemyRoot.Position + offset, enemyRoot.Position)
+							end)
+						end
 					end
 					if humanoid then
 						pcall(function()
@@ -3594,35 +3603,11 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
-			-- Dung tren tam than SeaBeast (do cao tren than + nho hover an toan) truoc khi tha skill
+			-- Dung giua SeaBeast: root * (0, 400, 0), look thang xuong than beast
 			local function getSeaBeastStandCFrame(targetRoot)
-				local standOffset = math.max(10, tonumber(getgenv().Config["Fish Trial Stand Offset"]) or 15)
-				local hoverHeight = math.max(30, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 35)
-
-				-- Lay vi tri phan cao nhat cua Sea Beast (Head / Hitbox / dinh than)
-				local model = (targetRoot:IsA("Model") and targetRoot) or targetRoot.Parent
-				local highestY = targetRoot.Position.Y
-				local aimPos = targetRoot.Position
-
-				if model and model:IsA("Model") then
-					for _, part in ipairs(model:GetChildren()) do
-						if part:IsA("BasePart") then
-							if part.Position.Y > highestY then
-								highestY = part.Position.Y
-							end
-						end
-					end
-					local head = model:FindFirstChild("Head") or model:FindFirstChild("Hitbox") or model:FindFirstChild("Torso")
-					if head and head:IsA("BasePart") then
-						aimPos = head.Position
-					end
-				end
-
-				local targetY = math.max(highestY, aimPos.Y)
-				local backVec = targetRoot.CFrame.LookVector
-				local hoverPos = Vector3.new(aimPos.X, targetY + hoverHeight, aimPos.Z) - (backVec * standOffset)
-
-				return safeLookAt(hoverPos, aimPos)
+				local hoverHeight = math.max(30, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 400)
+				local hoverPos = targetRoot.Position + Vector3.new(0, hoverHeight, 0)
+				return safeLookAt(hoverPos, targetRoot.Position)
 			end
 
 		local character = Players.LocalPlayer.Character
@@ -3666,12 +3651,6 @@ function runCurrentRaceTrial(race, trialLocation)
 					ownRoot.Velocity = Vector3.zero
 					pcall(function() ownRoot.AssemblyLinearVelocity = Vector3.zero end)
 				end
-
-				-- Xa FastAttack va danh lien tuc
-				if getgenv().TyrantFastAttack then
-					pcall(getgenv().TyrantFastAttack)
-				end
-				TyrNormalAttack(0.12, root, standCFrame)
 
 				if loopCount % 10 == 0 then
 					status("Trial of Water - slaying Sea Beast [" .. math.floor(currentHp) .. " HP]")
