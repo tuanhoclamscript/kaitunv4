@@ -3509,7 +3509,19 @@ function runCurrentRaceTrial(race, trialLocation)
 						local myRoot = char and char:FindFirstChild("HumanoidRootPart")
 						if myRoot and enemyRoot.Parent then
 							pcall(function()
-								myRoot.CFrame = CFrame.new(enemyRoot.Position)
+								local mobPos = enemyRoot.Position
+								-- Raycast xuong de tim Y mat san, tranh dung giua khong trung
+								local groundY = mobPos.Y
+								local rayResult = workspace:Raycast(
+									mobPos + Vector3.new(0, 5, 0),
+									Vector3.new(0, -200, 0),
+									RaycastParams.new()
+								)
+								if rayResult then
+									groundY = rayResult.Position.Y + 3
+								end
+								local standPos = Vector3.new(mobPos.X + 10, groundY, mobPos.Z)
+								myRoot.CFrame = CFrame.new(standPos)
 								myRoot.Velocity = Vector3.zero
 								myRoot.AssemblyLinearVelocity = Vector3.zero
 							end)
@@ -3605,7 +3617,7 @@ function runCurrentRaceTrial(race, trialLocation)
 
 			-- Dung giua SeaBeast: root.Position + (0, 30, 0), look thang xuong than beast
 			local function getSeaBeastStandCFrame(targetRoot)
-				return targetRoot.CFrame * CFrame.new(0, 350, 0)
+				return safeLookAt(targetRoot.Position + Vector3.new(0, 350, 0), targetRoot.Position)
 			end
 
 		local character = Players.LocalPlayer.Character
