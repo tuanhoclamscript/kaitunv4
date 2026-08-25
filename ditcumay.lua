@@ -3848,6 +3848,13 @@ function runTrialCompletionBarrier()
 	local isHelperRole = isAlly or (isUper and not isMyUpgearTurn())
 
 	if not ffaActive then
+		-- Hub cancelled the assignment while we were waiting → reset immediately
+		-- so the Hub can re-pair this account instead of waiting the full timeout.
+		if not matchState.assigned then
+			status("Hub cancelled group while holding - resetting for re-pair")
+			resetTrialBarrierState()
+			return
+		end
 		-- Keep the timeout clock ticking; reset it only when we first start waiting
 		if barrierProgressAt <= 0 then
 			barrierProgressAt = tick()
@@ -6390,6 +6397,13 @@ task.spawn(function()
 			if postTrialState and (postTrialState.needsTraining or postTrialState.needsPurchase or postTrialState.complete) then
 				resetTrialBarrierState()
 				matchState.assigned = false
+				pcall(runWaitingAccountWork)
+			elseif not matchState.assigned then
+				-- Hub đã cancel assignment (member timeout / expired) trong lúc
+				-- đang đứng barrier. Reset để Hub ghép nhóm mới thay vì đứng mãi.
+				status("Hub cancelled group while in barrier - resetting for re-pair")
+				resetTrialBarrierState()
+				helperSacrificeDone = false
 				pcall(runWaitingAccountWork)
 			else
 				pcall(runTrialCompletionBarrier)
