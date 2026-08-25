@@ -3332,10 +3332,27 @@ function runCurrentRaceTrial(race, trialLocation)
 		equipTrialCombatTool()
 		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 20)
 		local trialEnemies = {}
-		for _, folder in ipairs(TyrGetEnemyFolders()) do
-			for _, enemy in ipairs(folder:GetChildren()) do
-				trialEnemies[#trialEnemies + 1] = enemy
+		-- Collect enemies, retry nếu streaming chưa replicate (thường gặp khi
+		-- vừa vào arena, _WorldOrigin.Enemies chưa có đủ mob).
+		for attempt = 1, 6 do
+			for _, folder in ipairs(TyrGetEnemyFolders()) do
+				for _, enemy in ipairs(folder:GetChildren()) do
+					local root = enemy:FindFirstChild("HumanoidRootPart")
+					local hum = enemy:FindFirstChild("Humanoid")
+					if root and hum and hum.Health > 0
+						and getdis(root.CFrame, trialLocation.CFrame) < 1500
+					then
+						trialEnemies[#trialEnemies + 1] = enemy
+					end
+				end
 			end
+			if #trialEnemies > 0 then break end
+			status("Human/Ghoul trial - waiting for enemies to spawn (" .. attempt .. "/6)")
+			task.wait(0.5)
+		end
+		if #trialEnemies == 0 then
+			status("Human/Ghoul trial - no enemies found, retrying next tick")
+			return true
 		end
 		for _, enemy in ipairs(trialEnemies) do
 			local root = enemy:FindFirstChild("HumanoidRootPart")
