@@ -3605,9 +3605,7 @@ function runCurrentRaceTrial(race, trialLocation)
 
 			-- Dung giua SeaBeast: root.Position + (0, 30, 0), look thang xuong than beast
 			local function getSeaBeastStandCFrame(targetRoot)
-				local hoverHeight = math.max(10, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 30)
-				local hoverPos = targetRoot.Position + Vector3.new(0, hoverHeight, 0)
-				return safeLookAt(hoverPos, targetRoot.Position)
+				return targetRoot.CFrame * CFrame.new(0, 350, 0)
 			end
 
 		local character = Players.LocalPlayer.Character
