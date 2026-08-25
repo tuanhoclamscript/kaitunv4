@@ -3330,24 +3330,27 @@ function runCurrentRaceTrial(race, trialLocation)
 		equipTrialCombatTool()
 		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 20)
 
-		-- Lay arena center tu trialLocation (BasePart trong _WorldOrigin.Locations)
-		local arenaPos = trialLocation.Position
-
-		-- Tim mob song BEN TRONG arena (< 300 stud tu center), giong CheckMonster
-		-- cua training nhung dung distance thay vi ten mob.
+		-- Tim mob song trong arena: uu tien mob gan player nhat
 		local function findTrialMob()
+			local char = Players.LocalPlayer.Character
+			local ownRoot = char and char:FindFirstChild("HumanoidRootPart")
+			local best, bestDist = nil, math.huge
 			for _, folder in ipairs(TyrGetEnemyFolders()) do
 				for _, enemy in ipairs(folder:GetChildren()) do
 					local root = enemy:FindFirstChild("HumanoidRootPart")
 					local hum = enemy:FindFirstChild("Humanoid")
-					if root and hum and hum.Health > 0
-						and (root.Position - arenaPos).Magnitude < 300
-					then
-						return enemy
+					if root and hum and hum.Health > 0 then
+						local distArena = (root.Position - trialLocation.Position).Magnitude
+						local distPlayer = ownRoot and (root.Position - ownRoot.Position).Magnitude or distArena
+						-- Mob phai trong arena (< 1500 tu cong vao) va gan player nhat
+						if distArena < 1500 and distPlayer < bestDist then
+							best = enemy
+							bestDist = distPlayer
+						end
 					end
 				end
 			end
-			return nil
+			return best
 		end
 
 		local mob = findTrialMob()
@@ -3357,24 +3360,26 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
-		-- Giong training: outer loop o tryRunOwnRaceTrial goi lai sau moi mob.
-		-- Ben trong: repeat...until het mob hoac character doi / chet.
-		-- module:eq() khong co task.wait, dung thay cho equipTrialCombatTool trong loop.
 		local attemptCharacter = Players.LocalPlayer.Character
 		local root = mob:FindFirstChild("HumanoidRootPart")
 		local humanoid = mob:FindFirstChild("Humanoid")
 		if not root or not humanoid or humanoid.Health <= 0 then
 			return true
 		end
+
+		-- Giong training repeat loop: eq + haki + orbit topos moi tick
+		-- Humanoid.Sit force false moi tick de CheckStun khong block attack
 		repeat
 			task.wait()
 			module:eq()
 			module:haki()
+			local char = Players.LocalPlayer.Character
+			local ownHum = char and char:FindFirstChildOfClass("Humanoid")
+			if ownHum and ownHum.Sit then ownHum.Sit = false end
 			root = mob:FindFirstChild("HumanoidRootPart")
 			humanoid = mob:FindFirstChild("Humanoid")
 			if root and humanoid and humanoid.Health > 0 then
-				local mobHp = math.floor(humanoid.Health)
-				substatus(race .. " trial: " .. mob.Name .. " " .. mobHp .. "HP")
+				substatus(race .. " trial: " .. mob.Name .. " " .. math.floor(humanoid.Health) .. "HP")
 				status(race .. " trial - killing mob")
 				local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
 				if orbit and (orbit.Position - root.Position).Magnitude > AttackConfig.AttackDistance - 12 then
