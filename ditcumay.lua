@@ -1717,7 +1717,7 @@ local function extractAttack()
 		RegisterAttack:FireServer(0)
 	end)
 	pcall(function()
-		RegisterHit:FireServer(firstHit, hitList, nil, "078da341")
+		RegisterHit:FireServer(firstHit, hitList, nil, "078da5141")
 	end)
 	lastExtractAttackAt = tick()
 	return true
