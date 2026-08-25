@@ -3503,10 +3503,10 @@ function runCurrentRaceTrial(race, trialLocation)
 						or enemy.PrimaryPart
 					humanoid = enemy:FindFirstChildOfClass("Humanoid")
 					if enemyRoot then
-						-- Gan mob 10-20 studs: bay den mat truoc con quai chu khong bay vong quanh.
+						-- Dung canh mob 20 studs roi set Health = 0 truc tiep.
 						local char = Players.LocalPlayer.Character
 						local myRoot = char and char:FindFirstChild("HumanoidRootPart")
-						local standDist = 10 + (tick() * 20) % 10
+						local standDist = 20
 						if myRoot and enemyRoot.Parent then
 							pcall(function()
 								local offset = enemyRoot.CFrame.LookVector * standDist
@@ -3603,9 +3603,9 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
-			-- Dung giua SeaBeast: root * (0, 400, 0), look thang xuong than beast
+			-- Dung giua SeaBeast: root.Position + (0, 30, 0), look thang xuong than beast
 			local function getSeaBeastStandCFrame(targetRoot)
-				local hoverHeight = math.max(30, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 400)
+				local hoverHeight = math.max(10, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 30)
 				local hoverPos = targetRoot.Position + Vector3.new(0, hoverHeight, 0)
 				return safeLookAt(hoverPos, targetRoot.Position)
 			end
