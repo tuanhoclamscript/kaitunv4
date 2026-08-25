@@ -3332,105 +3332,29 @@ function runCurrentRaceTrial(race, trialLocation)
 	elseif race == "Human" or race == "Ghoul" then
 		AttackConfig.AutoClickEnabled = true
 		_G.TYRANT_FARMING = false
-		equipTrialCombatTool()
-		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 20)
-
-		-- Tim mob song trong arena: uu tien mob gan player nhat
-		local function findTrialMob()
-			local char = Players.LocalPlayer.Character
-			local ownRoot = char and char:FindFirstChild("HumanoidRootPart")
-			local best, bestDist = nil, math.huge
-			for _, folder in ipairs(TyrGetEnemyFolders()) do
-				for _, enemy in ipairs(folder:GetChildren()) do
-					local root = enemy:FindFirstChild("HumanoidRootPart")
-					local hum = enemy:FindFirstChild("Humanoid")
-					if root and hum and hum.Health > 0 then
-						local distArena = (root.Position - trialLocation.Position).Magnitude
-						local distPlayer = ownRoot and (root.Position - ownRoot.Position).Magnitude or distArena
-						-- Mob phai trong arena (< 1500 tu cong vao) va gan player nhat
-						if distArena < 1500 and distPlayer < bestDist then
-							best = enemy
-							bestDist = distPlayer
-						end
+		for _, enemy in pairs(workspace.Enemies:GetChildren()) do
+			local root = enemy:FindFirstChild("HumanoidRootPart")
+			local humanoid = enemy:FindFirstChild("Humanoid")
+			if root and humanoid and humanoid.Health > 0
+				and getdis(root.CFrame, trialLocation.CFrame) < 1500
+			then
+				local attemptCharacter = Players.LocalPlayer.Character
+				repeat
+					task.wait()
+					module:eq()
+					module:haki()
+					root = enemy:FindFirstChild("HumanoidRootPart")
+					if root then
+						topos(root.CFrame * CFrame.new(0, 30, 0))
 					end
-				end
+					humanoid = enemy:FindFirstChild("Humanoid")
+				until Players.LocalPlayer.Character ~= attemptCharacter
+					or not attemptCharacter.Parent
+					or not attemptCharacter:FindFirstChildOfClass("Humanoid")
+					or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
+					or not enemy.Parent or not root or not humanoid or humanoid.Health <= 0
 			end
-			return best
 		end
-
-		local mob = findTrialMob()
-		if not mob then
-			status(race .. " trial - waiting for enemies to spawn")
-			task.wait(0.5)
-			return true
-		end
-
-		local attemptCharacter = Players.LocalPlayer.Character
-		local root = mob:FindFirstChild("HumanoidRootPart")
-		local humanoid = mob:FindFirstChild("Humanoid")
-		if not root or not humanoid or humanoid.Health <= 0 then
-			return true
-		end
-
-		-- Giong training repeat loop: orbit topos moi tick
-		-- Chi eq khi chua co tool dung loai (tranh equip lien tuc gay Sit=true block attack)
-		-- Humanoid.Sit force false moi tick de CheckStun khong block attack
-		repeat
-			task.wait()
-			local char = Players.LocalPlayer.Character
-			local ownHum = char and char:FindFirstChildOfClass("Humanoid")
-			local equippedTool = char and char:FindFirstChildOfClass("Tool")
-			if not equippedTool or (equippedTool.ToolTip ~= "Melee" and equippedTool.ToolTip ~= "Sword") then
-				module:eq()
-			end
-			module:haki()
-			if ownHum and ownHum.Sit then ownHum.Sit = false end
-			local stun = char and char:FindFirstChild("Stun")
-			if stun and stun.Value > 0 then stun.Value = 0 end
-			local busy = char and char:FindFirstChild("Busy")
-			if busy and busy.Value then busy.Value = false end
-
-			local energy = char and char:FindFirstChild("RaceEnergy")
-			if energy and energy.Value >= 1 then
-				VirtualInputManager:SendKeyEvent(true, "Y", false, game)
-				VirtualInputManager:SendKeyEvent(false, "Y", false, game)
-			end
-
-			root = mob:FindFirstChild("HumanoidRootPart")
-			humanoid = mob:FindFirstChild("Humanoid")
-			if root and humanoid and humanoid.Health > 0 then
-				substatus(race .. " trial: " .. mob.Name .. " " .. math.floor(humanoid.Health) .. "HP")
-				status(race .. " trial - killing mob")
-				local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
-				if orbit and (orbit.Position - root.Position).Magnitude > AttackConfig.AttackDistance - 15 then
-					orbit = root.CFrame * CFrame.new(0, orbitHeight, 0)
-				end
-				topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
-
-				-- Dam bao attack duoc kich hoat tich cuc ca trong loop lan qua Stepped event
-				AttackConfig.AutoClickEnabled = true
-				_G.TYRANT_FARMING = false
-				pcall(function()
-					AttackInstance:Attack()
-				end)
-				-- Direct hit fallback: ban thang goi RegisterHit vao mob va activate weapon
-				pcall(function()
-					local hitPart = mob:FindFirstChild("Head") or mob:FindFirstChild("HumanoidRootPart") or root
-					if hitPart then
-						RegisterAttack:FireServer(0)
-						RegisterHit:FireServer(hitPart, {}, nil, "078da5141")
-						local tool = char and char:FindFirstChildOfClass("Tool")
-						if tool then
-							tool:Activate()
-						end
-					end
-				end)
-			end
-		until Players.LocalPlayer.Character ~= attemptCharacter
-			or not attemptCharacter.Parent
-			or not attemptCharacter:FindFirstChildOfClass("Humanoid")
-			or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
-			or not mob.Parent or not root or not humanoid or humanoid.Health <= 0
 		return true
 	elseif race == "Fishman" then
 		_G.SHOULDSPAMSKILLS = false
