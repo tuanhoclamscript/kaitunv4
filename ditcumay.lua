@@ -3494,6 +3494,7 @@ function runCurrentRaceTrial(race, trialLocation)
 			else
 				local mobName = tostring(enemy.Name or "Mob")
 				local attemptCharacter = Players.LocalPlayer.Character
+				module:stopTween()
 				repeat
 					task.wait(0.03)
 					enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
