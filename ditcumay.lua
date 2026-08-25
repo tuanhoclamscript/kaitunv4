@@ -3331,7 +3331,8 @@ function runCurrentRaceTrial(race, trialLocation)
 		return true
 	elseif race == "Human" or race == "Ghoul" then
 		AttackConfig.AutoClickEnabled = true
-		_G.TYRANT_FARMING = false
+		equipTrialCombatTool()
+		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 30)
 		for _, enemy in pairs(workspace.Enemies:GetChildren()) do
 			local root = enemy:FindFirstChild("HumanoidRootPart")
 			local humanoid = enemy:FindFirstChild("Humanoid")
@@ -3345,8 +3346,15 @@ function runCurrentRaceTrial(race, trialLocation)
 					module:haki()
 					root = enemy:FindFirstChild("HumanoidRootPart")
 					if root then
-						topos(root.CFrame * CFrame.new(0, 30, 0))
+						-- Extract.lua bay vong quanh muc tieu thay vi treo co dinh:
+						-- offset trong local-space cua mob lech theo huong mob nga,
+						-- va dung mot goc co dinh lam RegisterHit de bi drop.
+						local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
+						topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
 					end
+					-- FastAttack tren Stepped ban RegisterHit khong kem validator;
+					-- extractAttack() ban dung goi hit cua Extract.lua.
+					extractAttack()
 					humanoid = enemy:FindFirstChild("Humanoid")
 				until Players.LocalPlayer.Character ~= attemptCharacter
 					or not attemptCharacter.Parent
