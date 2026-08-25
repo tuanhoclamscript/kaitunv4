@@ -22,7 +22,7 @@ getgenv().Config = {
 	["Pair Release After Trial"] = true,
 	["Pair Requeue Delay"] = 15,
 	["Pair Force Temple Interval"] = 0.8,
-	["Trial Barrier Timeout"] = 240,
+	["Trial Barrier Timeout"] = 50,
 	["Fish Trial Stand Height"] = 25,
 	["Fish Trial Stand Offset"] = 35,
 	["Full Moon API URL"] = "https://vortexz-hub.xyz/fullmoon",
@@ -1450,27 +1450,34 @@ function FastAttack:GetBladeHits(Character, Distance)
 					if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
 						if not self.EnemyRootPart then
 							self.EnemyRootPart = BasePart
-						else
-							table.insert(BladeHits, {
-								Enemy,
-								BasePart
-							})
-							table.insert(BladeHits, {})
 						end
+						table.insert(BladeHits, {
+							Enemy,
+							BasePart
+						})
+						table.insert(BladeHits, {})
 					end
 				end
 			end)
 		end
 	end
 	if AttackConfig.AttackMobs then
-		pcall(ProcessTargets, Workspace:WaitForChild("Enemies"))
+		pcall(ProcessTargets, Workspace:FindFirstChild("Enemies"))
 		local origin = Workspace:FindFirstChild("_WorldOrigin")
 		if origin and origin:FindFirstChild("Enemies") then
 			pcall(ProcessTargets, origin.Enemies)
 		end
+		local mobsFolder = Workspace:FindFirstChild("Mobs")
+		if mobsFolder then
+			pcall(ProcessTargets, mobsFolder)
+		end
+		local npcsFolder = Workspace:FindFirstChild("NPCs")
+		if npcsFolder then
+			pcall(ProcessTargets, npcsFolder)
+		end
 	end
 	if AttackConfig.AttackPlayers then
-		pcall(ProcessTargets, Workspace:WaitForChild("Characters"))
+		pcall(ProcessTargets, Workspace:FindFirstChild("Characters"))
 	end
 	return BladeHits
 end
@@ -1557,21 +1564,24 @@ function FastAttack:UseNormalClick(Character, Humanoid, Cooldown, Combo)
 	if self.EnemyRootPart then
 		pcall(function()
 			local comboIndex = Combo or self.M1Combo or 1
-				local attackCooldown = comboIndex >= (AttackConfig.MaxCombo or 4) and 0.9 or 0.4
-				RegisterAttack:FireServer(attackCooldown, comboIndex)
+			local attackCooldown = comboIndex >= (AttackConfig.MaxCombo or 4) and 0.9 or 0.4
+			RegisterAttack:FireServer(attackCooldown, comboIndex)
+		end)
+		pcall(function()
+			RegisterHit:FireServer(self.EnemyRootPart, BladeHits, nil, "078da5141")
 		end)
 		if self.CombatFlags and self.HitFunction then
 			pcall(function()
 				self.HitFunction(self.EnemyRootPart, BladeHits)
 			end)
-		else
-			pcall(function()
-				RegisterHit:FireServer(self.EnemyRootPart, BladeHits, nil, "078da5141")
-			end)
 		end
 		pcall(function()
 			local tool = Character:FindFirstChildOfClass("Tool")
 			if tool then tool:Activate() end
+		end)
+		pcall(function()
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
 		end)
 	end
 end
@@ -1677,6 +1687,12 @@ local function getExtractAttackTargets()
 
 	if AttackConfig.AttackMobs then
 		collect(Workspace:FindFirstChild("Enemies"))
+		local origin = Workspace:FindFirstChild("_WorldOrigin")
+		if origin and origin:FindFirstChild("Enemies") then
+			collect(origin.Enemies)
+		end
+		collect(Workspace:FindFirstChild("Mobs"))
+		collect(Workspace:FindFirstChild("NPCs"))
 	end
 	if AttackConfig.AttackPlayers then
 		collect(Workspace:FindFirstChild("Characters"))
@@ -3227,22 +3243,43 @@ function getNearestTrialEnemy(trialLocation)
 	local character = Players.LocalPlayer.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	local best, bestDistance = nil, math.huge
-	local folders = { workspace:FindFirstChild("Enemies") }
+	local folders = {}
+	for _, name in ipairs({ "Enemies", "Characters", "NPCs", "Mobs" }) do
+		local folder = workspace:FindFirstChild(name)
+		if folder then
+			folders[#folders + 1] = folder
+		end
+	end
 	local origin = workspace:FindFirstChild("_WorldOrigin")
 	if origin then
-		folders[#folders + 1] = origin:FindFirstChild("Enemies")
+		local originEnemies = origin:FindFirstChild("Enemies")
+		if originEnemies then
+			folders[#folders + 1] = originEnemies
+		end
 	end
 	for _, folder in ipairs(folders) do
-		if folder then
-			for _, enemy in ipairs(folder:GetChildren()) do
-				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
-				local humanoid = enemy:FindFirstChildOfClass("Humanoid")
-				if enemyRoot and humanoid and humanoid.Health > 0
-					and (enemyRoot.Position - trialLocation.Position).Magnitude < 1800
-				then
-					local distance = root and (enemyRoot.Position - root.Position).Magnitude or 0
-					if distance < bestDistance then
-						best, bestDistance = enemy, distance
+		for _, enemy in ipairs(folder:GetChildren()) do
+			if enemy:IsA("Model") and enemy ~= character then
+				local isRealPlayer = false
+				pcall(function()
+					if Players:GetPlayerFromCharacter(enemy) then
+						isRealPlayer = true
+					end
+				end)
+				if not isRealPlayer then
+					local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+						or enemy:FindFirstChild("UpperTorso")
+						or enemy:FindFirstChild("Torso")
+						or enemy:FindFirstChild("Head")
+						or enemy.PrimaryPart
+					local humanoid = enemy:FindFirstChildOfClass("Humanoid")
+					if enemyRoot and humanoid and humanoid.Health > 0
+						and (enemyRoot.Position - trialLocation.Position).Magnitude < 1800
+					then
+						local distance = root and (enemyRoot.Position - root.Position).Magnitude or 0
+						if distance < bestDistance then
+							best, bestDistance = enemy, distance
+						end
 					end
 				end
 			end
@@ -3332,54 +3369,64 @@ function runCurrentRaceTrial(race, trialLocation)
 		return true
 	elseif race == "Human" or race == "Ghoul" then
 		AttackConfig.AutoClickEnabled = true
-		-- Vao trial ngay sau khi farm Tyrant thi _G.TYRANT_FARMING con true, vong
-		-- Stepped tu chan FastAttack:Attack() -> trial khong he attack.
 		_G.TYRANT_FARMING = false
 		equipTrialCombatTool()
-		local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 20)
-		local trialEnemies = {}
-		for _, folder in ipairs(TyrGetEnemyFolders()) do
-			for _, enemy in ipairs(folder:GetChildren()) do
-				trialEnemies[#trialEnemies + 1] = enemy
-			end
+		local orbitHeight = math.max(8, math.min(20, tonumber(getgenv().Config["Trial Orbit Height"]) or 15))
+		local enemy = getNearestTrialEnemy(trialLocation)
+		if not enemy then
+			status("Trial of Strength - waiting for mobs...")
+			topos(trialLocation.CFrame * CFrame.new(0, 20, 0))
+			return true
 		end
-		for _, enemy in ipairs(trialEnemies) do
-			local root = enemy:FindFirstChild("HumanoidRootPart")
-			local humanoid = enemy:FindFirstChild("Humanoid")
-			if root and humanoid and humanoid.Health > 0
-				and getdis(root.CFrame, trialLocation.CFrame) < 1500
-			then
-				local attemptCharacter = Players.LocalPlayer.Character
-				repeat
-					task.wait()
-					module:eq()
-					module:haki()
-					root = enemy:FindFirstChild("HumanoidRootPart")
-					if root then
-						-- Extract.lua bay vong quanh muc tieu thay vi treo co dinh:
-						-- offset trong local-space cua mob lech theo huong mob nga,
-						-- va dung mot goc co dinh lam RegisterHit de bi drop.
-						local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
-						if orbit and (orbit.Position - root.Position).Magnitude
-							> AttackConfig.AttackDistance - 12
-						then
-							-- getExtractOrbitTarget snap vi tri ve luoi 10 stud nen
-							-- diem orbit co the bi day ra ~67 stud, vuot
-							-- AttackDistance 65 -> GetBladeHits rong.
-							orbit = nil
-						end
-						topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
+		local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+			or enemy:FindFirstChild("UpperTorso")
+			or enemy:FindFirstChild("Torso")
+			or enemy:FindFirstChild("Head")
+			or enemy.PrimaryPart
+		local humanoid = enemy:FindFirstChildOfClass("Humanoid")
+		if enemyRoot and humanoid and humanoid.Health > 0 then
+			local mobName = tostring(enemy.Name or "Mob")
+			local attemptCharacter = Players.LocalPlayer.Character
+			local attackStartTime = tick()
+			repeat
+				task.wait()
+				equipTrialCombatTool()
+				module:haki()
+				local currentCharacter = Players.LocalPlayer.Character
+				local energy = currentCharacter and currentCharacter:FindFirstChild("RaceEnergy")
+				if energy and energy.Value >= 1 then
+					pcall(function()
+						VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+						VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+					end)
+				end
+				enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+					or enemy:FindFirstChild("UpperTorso")
+					or enemy:FindFirstChild("Torso")
+					or enemy:FindFirstChild("Head")
+					or enemy.PrimaryPart
+				if enemyRoot then
+					local orbit = getExtractOrbitTarget(enemyRoot.CFrame, orbitHeight)
+					if orbit and (orbit.Position - enemyRoot.Position).Magnitude > AttackConfig.AttackDistance - 15 then
+						orbit = nil
 					end
-					-- Hit do FastAttack tren Stepped ban (da co validator o
-					-- UseNormalClick). Khong goi extractAttack() o day: hai luong
-					-- cung ban RegisterHit se bi server rate-validate va drop het.
-					humanoid = enemy:FindFirstChild("Humanoid")
-				until Players.LocalPlayer.Character ~= attemptCharacter
-					or not attemptCharacter.Parent
-					or not attemptCharacter:FindFirstChildOfClass("Humanoid")
-					or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
-					or not enemy.Parent or not root or not humanoid or humanoid.Health <= 0
-			end
+					topos(orbit or (enemyRoot.CFrame * CFrame.new(0, orbitHeight, 0)))
+				end
+				humanoid = enemy:FindFirstChildOfClass("Humanoid")
+				local hpText = humanoid and math.floor(humanoid.Health) or 0
+				status("Trial of Strength - attacking " .. mobName .. " [" .. hpText .. " HP]")
+				pcall(function()
+					AttackInstance:Attack()
+				end)
+				if getgenv().TyrantFastAttack then
+					pcall(getgenv().TyrantFastAttack)
+				end
+			until Players.LocalPlayer.Character ~= attemptCharacter
+				or not attemptCharacter.Parent
+				or not attemptCharacter:FindFirstChildOfClass("Humanoid")
+				or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
+				or not enemy.Parent or not enemyRoot or not humanoid or humanoid.Health <= 0
+				or (tick() - attackStartTime > 60)
 		end
 		return true
 	elseif race == "Fishman" then
