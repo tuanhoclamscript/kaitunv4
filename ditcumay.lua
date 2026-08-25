@@ -1410,12 +1410,17 @@ function FastAttack:IsEntityAlive(entity)
 end
 
 function FastAttack:CheckStun(Character, Humanoid, ToolTip)
+	if not Character or not Humanoid then return false end
+	if Humanoid.Sit then
+		pcall(function() Humanoid.Sit = false end)
+	end
 	local Stun = Character:FindFirstChild("Stun")
+	if Stun and Stun.Value > 0 then
+		pcall(function() Stun.Value = 0 end)
+	end
 	local Busy = Character:FindFirstChild("Busy")
-	if Humanoid.Sit and (ToolTip == "Sword" or ToolTip == "Melee" or ToolTip == "Blox Fruit") then
-		return false
-	elseif Stun and Stun.Value > 0 or Busy and Busy.Value then
-		return false
+	if Busy and Busy.Value then
+		pcall(function() Busy.Value = false end)
 	end
 	return true
 end
@@ -1538,18 +1543,19 @@ end
 function FastAttack:UseNormalClick(Character, Humanoid, Cooldown)
 	local position = Character:GetPivot().Position
 	local distance = AttackConfig.AttackDistance
-	local firstHead = nil
+	local firstPart = nil
 	local hitList = {}
 
 	local function collect(folder)
 		if not folder then return end
 		for _, enemy in ipairs(folder:GetChildren()) do
 			if enemy ~= Character and self:IsEntityAlive(enemy) then
-				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChild("Head") or enemy.PrimaryPart
 				if enemyRoot and (enemyRoot.Position - position).Magnitude <= distance then
-					local head = enemy:FindFirstChild("Head") or enemyRoot
-					if not firstHead then firstHead = head end
+					local hitPart = enemy:FindFirstChild("Head") or enemyRoot
+					if not firstPart then firstPart = hitPart end
 					hitList[#hitList + 1] = { enemy, enemyRoot }
+					hitList[#hitList + 1] = {}
 				end
 			end
 		end
@@ -1564,9 +1570,18 @@ function FastAttack:UseNormalClick(Character, Humanoid, Cooldown)
 		collect(Workspace:FindFirstChild("Characters"))
 	end
 
-	if not firstHead then return end
-	RegisterAttack:FireServer(Cooldown)
-	RegisterHit:FireServer(firstHead, hitList, nil, "078da5141")
+	if not firstPart then return end
+	pcall(function()
+		RegisterAttack:FireServer(Cooldown or 0)
+	end)
+	if self.CombatFlags and self.HitFunction then
+		pcall(function()
+			self.HitFunction(firstPart, hitList)
+		end)
+	end
+	pcall(function()
+		RegisterHit:FireServer(firstPart, hitList, nil, "078da5141")
+	end)
 end
 
 function FastAttack:UseFruitM1(Character, Equipped, Combo)
@@ -3375,19 +3390,39 @@ function runCurrentRaceTrial(race, trialLocation)
 			local char = Players.LocalPlayer.Character
 			local ownHum = char and char:FindFirstChildOfClass("Humanoid")
 			local equippedTool = char and char:FindFirstChildOfClass("Tool")
-			local wantTip = _G.USESWORD and "Sword" or "Melee"
 			if not equippedTool or (equippedTool.ToolTip ~= "Melee" and equippedTool.ToolTip ~= "Sword") then
 				module:eq()
 			end
 			module:haki()
 			if ownHum and ownHum.Sit then ownHum.Sit = false end
+			local stun = char and char:FindFirstChild("Stun")
+			if stun and stun.Value > 0 then stun.Value = 0 end
+			local busy = char and char:FindFirstChild("Busy")
+			if busy and busy.Value then busy.Value = false end
+
+			local energy = char and char:FindFirstChild("RaceEnergy")
+			if energy and energy.Value >= 1 then
+				VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+				VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+			end
+
 			root = mob:FindFirstChild("HumanoidRootPart")
 			humanoid = mob:FindFirstChild("Humanoid")
 			if root and humanoid and humanoid.Health > 0 then
 				substatus(race .. " trial: " .. mob.Name .. " " .. math.floor(humanoid.Health) .. "HP")
 				status(race .. " trial - killing mob")
 				local orbit = getExtractOrbitTarget(root.CFrame, orbitHeight)
+				if orbit and (orbit.Position - root.Position).Magnitude > AttackConfig.AttackDistance - 15 then
+					orbit = root.CFrame * CFrame.new(0, orbitHeight, 0)
+				end
 				topos(orbit or (root.CFrame * CFrame.new(0, orbitHeight, 0)))
+
+				-- Dam bao attack duoc kich hoat tich cuc ca trong loop lan qua Stepped event
+				AttackConfig.AutoClickEnabled = true
+				_G.TYRANT_FARMING = false
+				pcall(function()
+					AttackInstance:Attack()
+				end)
 			end
 		until Players.LocalPlayer.Character ~= attemptCharacter
 			or not attemptCharacter.Parent
