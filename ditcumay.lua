@@ -1536,24 +1536,37 @@ function FastAttack:GetValidator2()
 end
 
 function FastAttack:UseNormalClick(Character, Humanoid, Cooldown)
-	self.EnemyRootPart = nil
-	local BladeHits = self:GetBladeHits(Character)
-	if self.EnemyRootPart then
-		-- GetBladeHits giu target dau tien lam EnemyRootPart va KHONG dua no vao
-		-- BladeHits. Khi chi co 1 mob (dung canh trial Human/Ghoul) thi BladeHits
-		-- rong -> server khong ghi nhan hit nao -> "trial khong attack".
-		-- Extract.lua va TyrFastAttack deu dua ca target dau vao hit list.
-		local primary = self.EnemyRootPart.Parent
-		if primary then
-			table.insert(BladeHits, 1, {})
-			table.insert(BladeHits, 1, { primary, self.EnemyRootPart })
+	local position = Character:GetPivot().Position
+	local distance = AttackConfig.AttackDistance
+	local firstHead = nil
+	local hitList = {}
+
+	local function collect(folder)
+		if not folder then return end
+		for _, enemy in ipairs(folder:GetChildren()) do
+			if enemy ~= Character and self:IsEntityAlive(enemy) then
+				local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+				if enemyRoot and (enemyRoot.Position - position).Magnitude <= distance then
+					local head = enemy:FindFirstChild("Head") or enemyRoot
+					if not firstHead then firstHead = head end
+					hitList[#hitList + 1] = { enemy, enemyRoot }
+				end
+			end
 		end
-		RegisterAttack:FireServer(Cooldown)
-		-- Luon ban RegisterHit kem validator. Nhanh HitFunction
-		-- (_G.SendHitsToServer) khong mang "078da5141", nen khi CombatFlags ton
-		-- tai thi toan bo hit di duong do va bi server drop.
-		RegisterHit:FireServer(self.EnemyRootPart, BladeHits, nil, "078da5141")
 	end
+
+	if AttackConfig.AttackMobs then
+		collect(Workspace:FindFirstChild("Enemies"))
+		local origin = Workspace:FindFirstChild("_WorldOrigin")
+		if origin then collect(origin:FindFirstChild("Enemies")) end
+	end
+	if AttackConfig.AttackPlayers then
+		collect(Workspace:FindFirstChild("Characters"))
+	end
+
+	if not firstHead then return end
+	RegisterAttack:FireServer(Cooldown)
+	RegisterHit:FireServer(firstHead, hitList, nil, "078da5141")
 end
 
 function FastAttack:UseFruitM1(Character, Equipped, Combo)
