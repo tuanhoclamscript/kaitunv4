@@ -3503,22 +3503,27 @@ function runCurrentRaceTrial(race, trialLocation)
 						or enemy.PrimaryPart
 					humanoid = enemy:FindFirstChildOfClass("Humanoid")
 					if enemyRoot then
-						-- Dung canh mob 20 studs roi set Health = 0 truc tiep.
+						-- Dung BEN CANH mob gan nhat (10-20 studs, RightVector phang).
+						-- Chi set Health = 0 khi da that su o gan: o xa se bi ghost mob.
 						local char = Players.LocalPlayer.Character
 						local myRoot = char and char:FindFirstChild("HumanoidRootPart")
-						local standDist = 20
+						local standDist = 10 + (tick() * 8) % 10
 						if myRoot and enemyRoot.Parent then
 							pcall(function()
-								local offset = enemyRoot.CFrame.LookVector * standDist
-									+ Vector3.new(0, 5, 0)
+								local right = enemyRoot.CFrame.RightVector
+								local flatRight = Vector3.new(right.X, 0, right.Z)
+								if flatRight.Magnitude < 0.05 then
+									flatRight = Vector3.new(1, 0, 0)
+								end
+								local offset = flatRight.Unit * standDist
 								myRoot.CFrame = CFrame.new(enemyRoot.Position + offset, enemyRoot.Position)
 							end)
 						end
-					end
-					if humanoid then
-						pcall(function()
-							humanoid.Health = 0
-						end)
+						if myRoot and (myRoot.Position - enemyRoot.Position).Magnitude <= 25 and humanoid then
+							pcall(function()
+								humanoid.Health = 0
+							end)
+						end
 					end
 				until Players.LocalPlayer.Character ~= attemptCharacter
 					or not attemptCharacter.Parent
