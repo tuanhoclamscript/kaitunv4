@@ -3617,7 +3617,7 @@ function runCurrentRaceTrial(race, trialLocation)
 
 			-- Dung giua SeaBeast: root.Position + (0, 30, 0), look thang xuong than beast
 			local function getSeaBeastStandCFrame(targetRoot)
-				return safeLookAt(targetRoot.Position + Vector3.new(0, 350, 0), targetRoot.Position)
+				return safeLookAt(targetRoot.Position + Vector3.new(0, 30, 0), targetRoot.Position)
 			end
 
 		local character = Players.LocalPlayer.Character
