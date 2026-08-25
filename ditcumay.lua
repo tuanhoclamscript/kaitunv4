@@ -3471,65 +3471,55 @@ function runCurrentRaceTrial(race, trialLocation)
 		topos(floor.CFrame * CFrame.new(0, 500, 0))
 		return true
 	elseif race == "Human" or race == "Ghoul" then
-		AttackConfig.AutoClickEnabled = true
+		-- Khong danh melee: bay toi tung quai roi set Health = 0 truc tiep.
 		_G.TYRANT_FARMING = false
-		equipTrialCombatTool()
+		AttackConfig.AutoClickEnabled = false
 		local orbitHeight = math.max(8, math.min(20, tonumber(getgenv().Config["Trial Orbit Height"]) or 15))
-		local enemy = getNearestTrialEnemy(trialLocation)
-		if not enemy then
-			status("Trial of Strength - waiting for mobs...")
-			topos(trialLocation.CFrame * CFrame.new(0, 20, 0))
-			return true
-		end
-		local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
-			or enemy:FindFirstChild("UpperTorso")
-			or enemy:FindFirstChild("Torso")
-			or enemy:FindFirstChild("Head")
-			or enemy.PrimaryPart
-		local humanoid = enemy:FindFirstChildOfClass("Humanoid")
-		if enemyRoot and humanoid and humanoid.Health > 0 then
-			local mobName = tostring(enemy.Name or "Mob")
-			local attemptCharacter = Players.LocalPlayer.Character
-			local attackStartTime = tick()
-			repeat
-				task.wait(0.03)
-				equipTrialCombatTool()
-				module:haki()
-				local currentCharacter = Players.LocalPlayer.Character
-				local energy = currentCharacter and currentCharacter:FindFirstChild("RaceEnergy")
-				if energy and energy.Value >= 1 then
-					pcall(function()
-						VirtualInputManager:SendKeyEvent(true, "Y", false, game)
-						VirtualInputManager:SendKeyEvent(false, "Y", false, game)
-					end)
-				end
-				enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
-					or enemy:FindFirstChild("UpperTorso")
-					or enemy:FindFirstChild("Torso")
-					or enemy:FindFirstChild("Head")
-					or enemy.PrimaryPart
-				if enemyRoot then
-					local orbit = getExtractOrbitTarget(enemyRoot.CFrame, orbitHeight)
-					if orbit and (orbit.Position - enemyRoot.Position).Magnitude > AttackConfig.AttackDistance - 15 then
-						orbit = nil
+		local deadline = tick() + 120
+		while tick() < deadline do
+			local enemy = getNearestTrialEnemy(trialLocation)
+			if not enemy then
+				status("Trial of Strength - waiting for mobs...")
+				topos(trialLocation.CFrame * CFrame.new(0, 20, 0))
+				return true
+			end
+			local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+				or enemy:FindFirstChild("UpperTorso")
+				or enemy:FindFirstChild("Torso")
+				or enemy:FindFirstChild("Head")
+				or enemy.PrimaryPart
+			local humanoid = enemy:FindFirstChildOfClass("Humanoid")
+			if not enemyRoot or not humanoid then
+				task.wait(0.1)
+			else
+				local mobName = tostring(enemy.Name or "Mob")
+				local attemptCharacter = Players.LocalPlayer.Character
+				repeat
+					task.wait(0.03)
+					enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+						or enemy:FindFirstChild("UpperTorso")
+						or enemy:FindFirstChild("Torso")
+						or enemy:FindFirstChild("Head")
+						or enemy.PrimaryPart
+					humanoid = enemy:FindFirstChildOfClass("Humanoid")
+					if enemyRoot then
+						topos(getExtractOrbitTarget(enemyRoot.CFrame, orbitHeight)
+							or (enemyRoot.CFrame * CFrame.new(0, orbitHeight, 0)))
 					end
-					topos(orbit or (enemyRoot.CFrame * CFrame.new(0, orbitHeight, 0)))
-				end
-				humanoid = enemy:FindFirstChildOfClass("Humanoid")
-				local hpText = humanoid and math.floor(humanoid.Health) or 0
-				status("Trial of Strength - attacking " .. mobName .. " [" .. hpText .. " HP]")
-				
-				FireDamageToTargets({ enemy })
-				pcall(function()
-					AttackInstance:Attack()
-				end)
-			until Players.LocalPlayer.Character ~= attemptCharacter
-				or not attemptCharacter.Parent
-				or not attemptCharacter:FindFirstChildOfClass("Humanoid")
-				or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
-				or not enemy.Parent or not enemyRoot or not humanoid or humanoid.Health <= 0
-				or (tick() - attackStartTime > 60)
+					if humanoid then
+						pcall(function()
+							humanoid.Health = 0
+						end)
+					end
+				until Players.LocalPlayer.Character ~= attemptCharacter
+					or not attemptCharacter.Parent
+					or not attemptCharacter:FindFirstChildOfClass("Humanoid")
+					or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
+					or not enemy.Parent or not enemyRoot or not humanoid or humanoid.Health <= 0
+			end
+			task.wait(0.1)
 		end
+		AttackConfig.AutoClickEnabled = true
 		return true
 	elseif race == "Fishman" then
 		_G.SHOULDSPAMSKILLS = false
