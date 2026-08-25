@@ -110,13 +110,139 @@ local LocalPlayer = Player
 
 local Modules = ReplicatedStorage:WaitForChild("Modules", 10)
 local Net = Modules and Modules:WaitForChild("Net", 10)
-local RegisterAttack = Net and Net:WaitForChild("RE/RegisterAttack", 10)
-local RegisterHit = Net and Net:WaitForChild("RE/RegisterHit", 10)
-local ShootGunEvent = Net and Net:WaitForChild("RE/ShootGunEvent", 10)
+local NetRequired = nil
+pcall(function()
+	if Net then
+		NetRequired = require(Net)
+	end
+end)
+local RegisterAttack = nil
+local RegisterHit = nil
+pcall(function()
+	if NetRequired and type(NetRequired.RemoteEvent) == "function" then
+		RegisterAttack = NetRequired:RemoteEvent("RegisterAttack", true)
+		RegisterHit = NetRequired:RemoteEvent("RegisterHit", true)
+	end
+end)
+if not RegisterAttack and Net then
+	RegisterAttack = Net:FindFirstChild("RE/RegisterAttack") or Net:WaitForChild("RE/RegisterAttack", 5)
+end
+if not RegisterHit and Net then
+	RegisterHit = Net:FindFirstChild("RE/RegisterHit") or Net:WaitForChild("RE/RegisterHit", 5)
+end
+local ShootGunEvent = Net and (Net:FindFirstChild("RE/ShootGunEvent") or Net:WaitForChild("RE/ShootGunEvent", 5))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
 local GunValidator = Remotes and Remotes:WaitForChild("Validator2", 10)
 local CommF_ = Remotes and Remotes:WaitForChild("CommF_", 10)
 print("[v4] remotes resolved CommF_=" .. tostring(CommF_ ~= nil))
+
+local _bloxttack_seed = nil
+local _bloxttack_remoteAttack = nil
+local _bloxttack_remoteId = nil
+
+local function GetBloxRemoteAttack()
+	if _bloxttack_remoteAttack and _bloxttack_remoteAttack.Parent and _bloxttack_remoteId then
+		return true
+	end
+	_bloxttack_remoteAttack = nil
+	_bloxttack_remoteId = nil
+	for _, folderName in ipairs({ "Util", "Common", "Remotes", "Assets", "FX" }) do
+		local folder = ReplicatedStorage:FindFirstChild(folderName)
+		if folder then
+			for _, object in ipairs(folder:GetChildren()) do
+				if object:IsA("RemoteEvent") and object:GetAttribute("Id") then
+					_bloxttack_remoteAttack = object
+					_bloxttack_remoteId = object:GetAttribute("Id")
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+local function FireEncryptedHit(hitData)
+	if not _bloxttack_seed and Net then
+		pcall(function()
+			local seedRemote = Net:FindFirstChild("seed") or Net:WaitForChild("seed", 2)
+			if seedRemote then
+				_bloxttack_seed = seedRemote:InvokeServer()
+			end
+		end)
+	end
+	if not GetBloxRemoteAttack() or not _bloxttack_seed then
+		return
+	end
+	pcall(function()
+		local encodedName = string.gsub("RE/RegisterHit", ".", function(character)
+			return string.char(bit32.bxor(string.byte(character), math.floor(Workspace:GetServerTimeNow() / 10 % 10) + 1))
+		end)
+		_bloxttack_remoteAttack:FireServer(encodedName, bit32.bxor(_bloxttack_remoteId + 909090, _bloxttack_seed * 2), unpack(hitData))
+	end)
+end
+
+function FireDamageToTargets(targets)
+	if not targets or #targets == 0 then
+		return false
+	end
+	local hitData = {
+		[1] = nil,
+		[2] = {},
+		[4] = "078da5141"
+	}
+	for _, enemy in ipairs(targets) do
+		if enemy and enemy.Parent then
+			local hitPart = enemy:FindFirstChild("Head")
+				or enemy:FindFirstChild("HumanoidRootPart")
+				or enemy:FindFirstChild("UpperTorso")
+				or enemy:FindFirstChild("Torso")
+				or enemy.PrimaryPart
+			local hrp = enemy:FindFirstChild("HumanoidRootPart")
+				or enemy:FindFirstChild("UpperTorso")
+				or enemy:FindFirstChild("Torso")
+				or hitPart
+			if hitPart and hrp then
+				if not hitData[1] then
+					hitData[1] = hitPart
+				end
+				table.insert(hitData[2], { [1] = enemy, [2] = hrp })
+				table.insert(hitData[2], enemy)
+			end
+		end
+	end
+	if not hitData[1] or #hitData[2] == 0 then
+		return false
+	end
+
+	-- 1. RegisterAttack: 0 cooldown
+	pcall(function()
+		if RegisterAttack then
+			RegisterAttack:FireServer(0)
+		end
+		local rawAttack = Net and Net:FindFirstChild("RE/RegisterAttack")
+		if rawAttack and rawAttack ~= RegisterAttack then
+			rawAttack:FireServer(0)
+		end
+	end)
+
+	-- 2. RegisterHit: unpack(hitData)
+	pcall(function()
+		if RegisterHit then
+			RegisterHit:FireServer(unpack(hitData))
+		end
+		local rawHit = Net and Net:FindFirstChild("RE/RegisterHit")
+		if rawHit and rawHit ~= RegisterHit then
+			rawHit:FireServer(unpack(hitData))
+		end
+	end)
+
+	-- 3. Encrypted remote pipeline
+	pcall(function()
+		FireEncryptedHit(hitData)
+	end)
+
+	return true
+end
 
 local function getCurrentJobId()
 	return tostring(game.JobId or "")
@@ -1434,28 +1560,20 @@ end
 
 function FastAttack:GetBladeHits(Character, Distance)
 	local Position = Character:GetPivot().Position
-	local BladeHits = {}
-	Distance = Distance or AttackConfig.AttackDistance
+	local targets = {}
+	Distance = Distance or AttackConfig.AttackDistance or 65
 	local function ProcessTargets(Folder)
 		if not Folder then return end
 		for _, Enemy in ipairs(Folder:GetChildren()) do
 			pcall(function()
 				if Enemy ~= Character and self:IsEntityAlive(Enemy) then
-					local BasePart = Enemy:FindFirstChild("Head")
-						or Enemy:FindFirstChild("HumanoidRootPart")
+					local BasePart = Enemy:FindFirstChild("HumanoidRootPart")
+						or Enemy:FindFirstChild("Head")
 						or Enemy:FindFirstChild("UpperTorso")
 						or Enemy:FindFirstChild("Torso")
 						or Enemy.PrimaryPart
-						or Enemy:FindFirstChildWhichIsA("BasePart")
 					if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
-						if not self.EnemyRootPart then
-							self.EnemyRootPart = BasePart
-						end
-						table.insert(BladeHits, {
-							Enemy,
-							BasePart
-						})
-						table.insert(BladeHits, {})
+						table.insert(targets, Enemy)
 					end
 				end
 			end)
@@ -1479,17 +1597,20 @@ function FastAttack:GetBladeHits(Character, Distance)
 	if AttackConfig.AttackPlayers then
 		pcall(ProcessTargets, Workspace:FindFirstChild("Characters"))
 	end
-	return BladeHits
+	return targets
 end
 
 function FastAttack:GetClosestEnemy(Character, Distance)
-	local BladeHits = self:GetBladeHits(Character, Distance)
+	local targets = self:GetBladeHits(Character, Distance)
 	local Closest, MinDistance = nil, math.huge
-	for _, Hit in ipairs(BladeHits) do
-		local Magnitude = (Character:GetPivot().Position - Hit[2].Position).Magnitude
-		if Magnitude < MinDistance then
-			MinDistance = Magnitude;
-			Closest = Hit[2]
+	for _, Enemy in ipairs(targets) do
+		local part = Enemy:FindFirstChild("HumanoidRootPart") or Enemy:FindFirstChild("Head") or Enemy.PrimaryPart
+		if part then
+			local Magnitude = (Character:GetPivot().Position - part.Position).Magnitude
+			if Magnitude < MinDistance then
+				MinDistance = Magnitude
+				Closest = part
+			end
 		end
 	end
 	return Closest
@@ -1559,25 +1680,17 @@ function FastAttack:GetValidator2()
 end
 
 function FastAttack:UseNormalClick(Character, Humanoid, Cooldown, Combo)
-	self.EnemyRootPart = nil
-	local BladeHits = self:GetBladeHits(Character)
-	if self.EnemyRootPart then
-		pcall(function()
-			local comboIndex = Combo or self.M1Combo or 1
-			local attackCooldown = comboIndex >= (AttackConfig.MaxCombo or 4) and 0.9 or 0.4
-			RegisterAttack:FireServer(attackCooldown, comboIndex)
-		end)
-		pcall(function()
-			RegisterHit:FireServer(self.EnemyRootPart, BladeHits, nil, "078da5141")
-		end)
-		if self.CombatFlags and self.HitFunction then
-			pcall(function()
-				self.HitFunction(self.EnemyRootPart, BladeHits)
-			end)
-		end
+	local targets = self:GetBladeHits(Character)
+	if #targets > 0 then
+		FireDamageToTargets(targets)
 		pcall(function()
 			local tool = Character:FindFirstChildOfClass("Tool")
 			if tool then tool:Activate() end
+		end)
+		pcall(function()
+			local VirtualUser = game:GetService("VirtualUser")
+			VirtualUser:CaptureController()
+			VirtualUser:ClickButton1(Vector2.new(851, 158))
 		end)
 		pcall(function()
 			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
@@ -1587,11 +1700,13 @@ function FastAttack:UseNormalClick(Character, Humanoid, Cooldown, Combo)
 end
 
 function FastAttack:UseFruitM1(Character, Equipped, Combo)
-	local Targets = self:GetBladeHits(Character)
-	if not Targets[1] then
+	local targets = self:GetBladeHits(Character)
+	if not targets[1] then
 		return
 	end
-	local Direction = (Targets[1][2].Position - Character:GetPivot().Position).Unit
+	local part = targets[1]:FindFirstChild("HumanoidRootPart") or targets[1]:FindFirstChild("Head") or targets[1].PrimaryPart
+	if not part then return end
+	local Direction = (part.Position - Character:GetPivot().Position).Unit
 	Equipped.LeftClickRemote:FireServer(Direction, Combo)
 end
 
@@ -1603,36 +1718,24 @@ function FastAttack:Attack()
 	if not Character or not self:IsEntityAlive(Character) then
 		return
 	end
-	local Humanoid = Character.Humanoid
+	local Humanoid = Character:FindFirstChildOfClass("Humanoid") or Character:FindFirstChild("Humanoid")
 	local Equipped = Character:FindFirstChildOfClass("Tool")
 	if not Equipped then
-		return
+		equipTrialCombatTool()
+		Equipped = Character:FindFirstChildOfClass("Tool")
 	end
-	local ToolTip = Equipped.ToolTip
-	if not table.find({
-		"Melee",
-		"Blox Fruit",
-		"Sword",
-		"Gun"
-	}, ToolTip) then
-		return
-	end
-	local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or AttackConfig.AttackCooldown
-	if not self:CheckStun(Character, Humanoid, ToolTip) then
-		return
-	end
-	local Combo = self:GetCombo()
-	Cooldown = Cooldown + (Combo >= AttackConfig.MaxCombo and 0.05 or 0)
-	self.Debounce = Combo >= AttackConfig.MaxCombo and ToolTip ~= "Gun" and (tick() + 0.05) or tick()
-	if ToolTip == "Blox Fruit" and Equipped:FindFirstChild("LeftClickRemote") then
-		self:UseFruitM1(Character, Equipped, Combo)
-	elseif ToolTip == "Gun" then
+	local ToolTip = Equipped and Equipped.ToolTip or "Melee"
+	local Cooldown = AttackConfig.AttackCooldown or 0.05
+	self.Debounce = tick()
+	if ToolTip == "Blox Fruit" and Equipped and Equipped:FindFirstChild("LeftClickRemote") then
+		self:UseFruitM1(Character, Equipped, 1)
+	elseif ToolTip == "Gun" and Equipped then
 		local Target = self:GetClosestEnemy(Character, 120)
 		if Target then
 			self:ShootInTarget(Target.Position)
 		end
 	else
-		self:UseNormalClick(Character, Humanoid, Cooldown, Combo)
+		self:UseNormalClick(Character, Humanoid, Cooldown, 1)
 	end
 end
 
@@ -3389,7 +3492,7 @@ function runCurrentRaceTrial(race, trialLocation)
 			local attemptCharacter = Players.LocalPlayer.Character
 			local attackStartTime = tick()
 			repeat
-				task.wait()
+				task.wait(0.03)
 				equipTrialCombatTool()
 				module:haki()
 				local currentCharacter = Players.LocalPlayer.Character
@@ -3415,12 +3518,11 @@ function runCurrentRaceTrial(race, trialLocation)
 				humanoid = enemy:FindFirstChildOfClass("Humanoid")
 				local hpText = humanoid and math.floor(humanoid.Health) or 0
 				status("Trial of Strength - attacking " .. mobName .. " [" .. hpText .. " HP]")
+				
+				FireDamageToTargets({ enemy })
 				pcall(function()
 					AttackInstance:Attack()
 				end)
-				if getgenv().TyrantFastAttack then
-					pcall(getgenv().TyrantFastAttack)
-				end
 			until Players.LocalPlayer.Character ~= attemptCharacter
 				or not attemptCharacter.Parent
 				or not attemptCharacter:FindFirstChildOfClass("Humanoid")
