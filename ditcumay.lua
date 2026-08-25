@@ -3345,6 +3345,8 @@ end
 function getNearestTrialEnemy(trialLocation)
 	local character = Players.LocalPlayer.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local refPos = (root and root.Position) or (trialLocation and trialLocation.Position)
+	if not refPos then return nil end
 	local best, bestDistance = nil, math.huge
 	local folders = {}
 	for _, name in ipairs({ "Enemies", "Characters", "NPCs", "Mobs" }) do
@@ -3358,6 +3360,15 @@ function getNearestTrialEnemy(trialLocation)
 		local originEnemies = origin:FindFirstChild("Enemies")
 		if originEnemies then
 			folders[#folders + 1] = originEnemies
+		end
+	end
+	local map = workspace:FindFirstChild("Map")
+	if map then
+		for _, trialName in ipairs({ "HumanTrial", "Trial of Strength", "GhoulTrial", "Trial of Carnage" }) do
+			local trialFolder = map:FindFirstChild(trialName)
+			if trialFolder then
+				folders[#folders + 1] = trialFolder
+			end
 		end
 	end
 	for _, folder in ipairs(folders) do
@@ -3376,11 +3387,9 @@ function getNearestTrialEnemy(trialLocation)
 						or enemy:FindFirstChild("Head")
 						or enemy.PrimaryPart
 					local humanoid = enemy:FindFirstChildOfClass("Humanoid")
-					if enemyRoot and humanoid and humanoid.Health > 0
-						and (enemyRoot.Position - trialLocation.Position).Magnitude < 1800
-					then
-						local distance = root and (enemyRoot.Position - root.Position).Magnitude or 0
-						if distance < bestDistance then
+					if enemyRoot and humanoid and humanoid.Health > 0 then
+						local distance = (enemyRoot.Position - refPos).Magnitude
+						if distance < 2000 and distance < bestDistance then
 							best, bestDistance = enemy, distance
 						end
 					end
@@ -3471,69 +3480,64 @@ function runCurrentRaceTrial(race, trialLocation)
 		topos(floor.CFrame * CFrame.new(0, 500, 0))
 		return true
 	elseif race == "Human" or race == "Ghoul" then
-		-- Khong danh melee: bay toi tung quai roi set Health = 0 truc tiep.
 		_G.TYRANT_FARMING = false
 		AttackConfig.AutoClickEnabled = false
-		local orbitHeight = math.max(8, math.min(20, tonumber(getgenv().Config["Trial Orbit Height"]) or 15))
-		local deadline = tick() + 120
-		while tick() < deadline do
-			local enemy = getNearestTrialEnemy(trialLocation)
-			if not enemy then
-				status("Trial of Strength - waiting for mobs...")
-				topos(trialLocation.CFrame * CFrame.new(0, 20, 0))
-				return true
+		module:stopTween()
+		local character = Players.LocalPlayer.Character
+		local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+		local enemy = getNearestTrialEnemy(trialLocation)
+		if not enemy then
+			status("Trial of Strength - waiting for mobs...")
+			if myRoot and trialLocation then
+				pcall(function()
+					myRoot.CFrame = trialLocation.CFrame
+					myRoot.Velocity = Vector3.zero
+					myRoot.AssemblyLinearVelocity = Vector3.zero
+				end)
 			end
-			local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
-				or enemy:FindFirstChild("UpperTorso")
-				or enemy:FindFirstChild("Torso")
-				or enemy:FindFirstChild("Head")
-				or enemy.PrimaryPart
-			local humanoid = enemy:FindFirstChildOfClass("Humanoid")
-			if not enemyRoot or not humanoid then
-				task.wait(0.1)
-			else
-				local mobName = tostring(enemy.Name or "Mob")
-				local attemptCharacter = Players.LocalPlayer.Character
-				repeat
-					task.wait(0.03)
-					enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
-						or enemy:FindFirstChild("UpperTorso")
-						or enemy:FindFirstChild("Torso")
-						or enemy:FindFirstChild("Head")
-						or enemy.PrimaryPart
-					humanoid = enemy:FindFirstChildOfClass("Humanoid")
-					if enemyRoot then
-						-- Dung BEN CANH mob gan nhat (10-20 studs, RightVector phang).
-						-- Chi set Health = 0 khi da that su o gan: o xa se bi ghost mob.
-						local char = Players.LocalPlayer.Character
-						local myRoot = char and char:FindFirstChild("HumanoidRootPart")
-						local standDist = 10 + (tick() * 8) % 10
-						if myRoot and enemyRoot.Parent then
-							pcall(function()
-								local right = enemyRoot.CFrame.RightVector
-								local flatRight = Vector3.new(right.X, 0, right.Z)
-								if flatRight.Magnitude < 0.05 then
-									flatRight = Vector3.new(1, 0, 0)
-								end
-								local offset = flatRight.Unit * standDist
-								myRoot.CFrame = CFrame.new(enemyRoot.Position + offset, enemyRoot.Position)
-							end)
-						end
-						if myRoot and (myRoot.Position - enemyRoot.Position).Magnitude <= 25 and humanoid then
-							pcall(function()
-								humanoid.Health = 0
-							end)
-						end
-					end
-				until Players.LocalPlayer.Character ~= attemptCharacter
-					or not attemptCharacter.Parent
-					or not attemptCharacter:FindFirstChildOfClass("Humanoid")
-					or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
-					or not enemy.Parent or not enemyRoot or not humanoid or humanoid.Health <= 0
-			end
-			task.wait(0.1)
+			return true
 		end
-		AttackConfig.AutoClickEnabled = true
+		local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+			or enemy:FindFirstChild("UpperTorso")
+			or enemy:FindFirstChild("Torso")
+			or enemy:FindFirstChild("Head")
+			or enemy.PrimaryPart
+		local humanoid = enemy:FindFirstChildOfClass("Humanoid")
+		if enemyRoot and humanoid and humanoid.Health > 0 then
+			local mobName = tostring(enemy.Name or "Mob")
+			local attemptCharacter = Players.LocalPlayer.Character
+			local attackStartTime = tick()
+			repeat
+				task.wait(0.02)
+				character = Players.LocalPlayer.Character
+				myRoot = character and character:FindFirstChild("HumanoidRootPart")
+				enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+					or enemy:FindFirstChild("UpperTorso")
+					or enemy:FindFirstChild("Torso")
+					or enemy:FindFirstChild("Head")
+					or enemy.PrimaryPart
+				humanoid = enemy:FindFirstChildOfClass("Humanoid")
+				if myRoot and enemyRoot and enemyRoot.Parent then
+					pcall(function()
+						myRoot.CFrame = enemyRoot.CFrame
+						myRoot.Velocity = Vector3.zero
+						myRoot.AssemblyLinearVelocity = Vector3.zero
+					end)
+					if humanoid and humanoid.Health > 0 then
+						pcall(function()
+							humanoid.Health = 0
+							humanoid:ChangeState(Enum.HumanoidStateType.Dead)
+						end)
+					end
+				end
+				status("Trial of Strength - killing " .. mobName)
+			until Players.LocalPlayer.Character ~= attemptCharacter
+				or not attemptCharacter.Parent
+				or not attemptCharacter:FindFirstChildOfClass("Humanoid")
+				or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
+				or not enemy.Parent or not enemyRoot or not humanoid or humanoid.Health <= 0
+				or (tick() - attackStartTime > 30)
+		end
 		return true
 	elseif race == "Fishman" then
 		_G.SHOULDSPAMSKILLS = false
