@@ -1551,12 +1551,12 @@ function FastAttack:GetValidator2()
 	return math.floor(v9 / v4 * 16777215), v7
 end
 
-function FastAttack:UseNormalClick(Character, Humanoid, Cooldown)
+function FastAttack:UseNormalClick(Character, Humanoid, Cooldown, Combo)
 	self.EnemyRootPart = nil
 	local BladeHits = self:GetBladeHits(Character)
 	if self.EnemyRootPart then
 		pcall(function()
-			RegisterAttack:FireServer(Cooldown or 0)
+			RegisterAttack:FireServer(Cooldown or 0, Combo or self.M1Combo or 1)
 		end)
 		if self.CombatFlags and self.HitFunction then
 			pcall(function()
@@ -1620,7 +1620,7 @@ function FastAttack:Attack()
 			self:ShootInTarget(Target.Position)
 		end
 	else
-		self:UseNormalClick(Character, Humanoid, Cooldown)
+		self:UseNormalClick(Character, Humanoid, Cooldown, Combo)
 	end
 end
 
@@ -1713,8 +1713,9 @@ local function extractAttack()
 	end
 
 	-- RegisterAttack chi can mot lan cho moi goi hit, khong phai moi target.
+	local extractCombo = AttackInstance and AttackInstance:GetCombo() or 1
 	pcall(function()
-		RegisterAttack:FireServer(0)
+		RegisterAttack:FireServer(0, extractCombo)
 	end)
 	pcall(function()
 		RegisterHit:FireServer(firstHit, hitList, nil, "078da5141")
@@ -4318,6 +4319,8 @@ function TyrLoadAttack()
 			remoteAttack:FireServer(encodedName, bit32.bxor(remoteId + 909090, seed * 2), unpack(hitData))
 		end)
 	end
+	local tyrCombo = 0
+	local tyrComboDebounce = 0
 	local function TyrFastAttack()
 		local char = LocalPlayer.Character
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -4348,7 +4351,12 @@ function TyrLoadAttack()
 			}
 		end
 		pcall(function()
-			registerAttack:FireServer(0)
+			local maxCombo = AttackConfig.MaxCombo or 4
+			local resetTime = AttackConfig.ComboResetTime or 1.5
+			tyrCombo = (tick() - tyrComboDebounce) <= resetTime and tyrCombo or 0
+			tyrCombo = tyrCombo >= maxCombo and 1 or tyrCombo + 1
+			tyrComboDebounce = tick()
+			registerAttack:FireServer(0, tyrCombo)
 		end)
 		pcall(function()
 			registerHit:FireServer(unpack(hitData))
