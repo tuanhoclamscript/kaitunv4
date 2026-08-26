@@ -3643,8 +3643,22 @@ function runCurrentRaceTrial(race, trialLocation)
 		local attemptCharacter = character
 		local loopCount = 0
 		setTweenNoclip(true)
+
+		-- Khoa CFrame moi Heartbeat (moi frame) de skill knockback khong the vang nhan vat ra
+		local lockActive = true
+		local lockConnection = RunService.Heartbeat:Connect(function()
+			if not lockActive then return end
+			local r = attemptCharacter and attemptCharacter:FindFirstChild("HumanoidRootPart")
+			if r and root and root.Parent then
+				local targetCF = getSeaBeastStandCFrame(root)
+				r.CFrame = targetCF
+				r.Velocity = Vector3.zero
+				pcall(function() r.AssemblyLinearVelocity = Vector3.zero end)
+			end
+		end)
+
 		repeat
-			task.wait(0.03)
+			task.wait(0.1)
 			loopCount = loopCount + 1
 			local currentBeast, currentRoot, currentHp = findTrialSeaBeast()
 			if currentRoot then
@@ -3652,18 +3666,8 @@ function runCurrentRaceTrial(race, trialLocation)
 				beast = currentBeast
 				_G.TRIAL_SKILL_TARGET = root
 				_G.SKILL_AIM_TARGET = root
-
 				standCFrame = getSeaBeastStandCFrame(root)
-
-				ownRoot = attemptCharacter and attemptCharacter:FindFirstChild("HumanoidRootPart")
-				if ownRoot then
-					-- Khoa chat vi tri tren khong tai standCFrame, triet tieu velocity tranh roi xuong nuoc
-					ownRoot.CFrame = standCFrame
-					ownRoot.Velocity = Vector3.zero
-					pcall(function() ownRoot.AssemblyLinearVelocity = Vector3.zero end)
-				end
-
-				if loopCount % 10 == 0 then
+				if loopCount % 5 == 0 then
 					status("Trial of Water - slaying Sea Beast [" .. math.floor(currentHp) .. " HP]")
 				end
 			else
@@ -3675,6 +3679,8 @@ function runCurrentRaceTrial(race, trialLocation)
 			or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
 			or not beast.Parent
 
+		lockActive = false
+		lockConnection:Disconnect()
 		setTweenNoclip(false)
 		_G.SHOULDSPAMSKILLS = false
 		_G.TRIAL_SKILL_TARGET = nil
@@ -3852,6 +3858,11 @@ function evaluateOwnTrialCompletion(insideArena)
 		-- Phai xet TRUOC getTrialTimerVisible(): PlayerGui.Main.Timer
 		-- ("Time Left") van hien khi dang dung trong Temple, nen nhanh timer
 		-- ben duoi return false vinh vien -> khong bao gio ket luan la xong.
+		-- NHUNG: neu timer van con hien thi (trials van dang chay, bi vang ra ngoai arena)
+		-- thi KHONG duoc ket luan la xong — cho den khi timer tat hoac FFA.
+		if getTrialTimerVisible() then
+			return false
+		end
 		return true, "left_arena"
 	end
 	if getTrialTimerVisible() then
@@ -3881,6 +3892,35 @@ function tryRunOwnRaceTrial()
 		return false
 	end
 	if not inside then
+		-- Neu bi vang ra ngoai arena nhung timer van con (trials dang chay) ->
+		-- tween ve lai Sea Beast thay vi bo cuoc.
+		if trialRaceLock == "Fishman" and trialStartedAt > 0 and getTrialTimerVisible() then
+			local beast, beastRoot = (function()
+				local character = Players.LocalPlayer.Character
+				local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
+				local bestBeast, bestPart, bestDist = nil, nil, math.huge
+				local seaBeasts = workspace:FindFirstChild("SeaBeasts")
+				if seaBeasts then
+					for _, child in ipairs(seaBeasts:GetChildren()) do
+						local r = child:FindFirstChild("HumanoidRootPart") or child:FindFirstChild("Hitbox") or child:FindFirstChild("Head") or child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
+						if r then
+							local hum = child:FindFirstChildOfClass("Humanoid")
+							local hp = hum and hum.Health or 100000
+							if hp > 0 then
+								local d = ownRoot and (ownRoot.Position - r.Position).Magnitude or 0
+								if d < bestDist then bestBeast, bestPart, bestDist = child, r, d end
+							end
+						end
+					end
+				end
+				return bestBeast, bestPart
+			end)()
+			if beastRoot then
+				local returnCF = beastRoot.CFrame * CFrame.new(0, 350, 0)
+				status("Fish trial - knocked out of arena, returning to Sea Beast")
+				topos(returnCF)
+			end
+		end
 		return false
 	end
 	pairTrialCycleStarted = true
