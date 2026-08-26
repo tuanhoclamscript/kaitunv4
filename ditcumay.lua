@@ -4097,12 +4097,12 @@ function runTrialCompletionBarrier()
 			pcall(releaseCurrentGroup, 'helper_sacrificed')
 			return
 		end
-	\t-- helperSacrificeDone=true nhung releaseCurrentGroup chua duoc goi (edge case)
-	\tif tick() - trialCycleDoneAt > 15 then
-	\t\tpcall(releaseCurrentGroup, 'helper_barrier_timeout')
-	\t\tstatus("Helper barrier timeout - releasing for re-pair")
-	\tend
-	\treturn
+		-- helperSacrificeDone=true nhung releaseCurrentGroup chua duoc goi (edge case)
+		if tick() - trialCycleDoneAt > 15 then
+			pcall(releaseCurrentGroup, 'helper_barrier_timeout')
+			status("Helper barrier timeout - releasing for re-pair")
+		end
+		return
 	end
 
 	-- Main: fight FFA if opponents remain, then claim gear
@@ -6616,7 +6616,7 @@ task.spawn(function()
 				-- Release group de Hub giai phong Helper ngay lap tuc
 				if isUper and isMyUpgearTurn() then
 					local rr = postTrialState.needsTraining and 'post_trial_training'
-					\tor (postTrialState.needsPurchase and 'post_trial_upgrade' or 'race_v4_completed')
+						or (postTrialState.needsPurchase and 'post_trial_upgrade' or 'race_v4_completed')
 					pcall(releaseCurrentGroup, rr)
 				else
 					matchState.assigned = false
