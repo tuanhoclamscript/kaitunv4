@@ -3431,6 +3431,7 @@ trialCompletedHoldUntil = 0
 trialAttemptCharacter = nil
 trialFailureGeneration = 0
 trialRetryPending = false
+trialHumanFirstMobAt = 0
 local equipTrialCombatTool
 local TRIAL_BARRIER_TIMEOUT = math.max(60, tonumber(getgenv().Config["Trial Barrier Timeout"]) or 240)
 
@@ -3481,6 +3482,15 @@ function runCurrentRaceTrial(race, trialLocation)
 			if not enemy then
 				status("Trial of Strength - waiting for mobs...")
 				topos(trialLocation.CFrame * CFrame.new(0, 20, 0))
+				return true
+			end
+			-- Doi 2s tu luc dau tien thay mob (persistent giua cac lan goi)
+			if trialHumanFirstMobAt == 0 then
+				trialHumanFirstMobAt = tick()
+				status("Trial of Strength - mob found, waiting 2s...")
+				return true
+			end
+			if tick() - trialHumanFirstMobAt < 2 then
 				return true
 			end
 			local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
@@ -3604,9 +3614,9 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
-			-- Dung giua SeaBeast: root.Position + (0, 30, 0), look thang xuong than beast
+				-- Dung co dinh 350 units tren SeaBeast (CFrame offset), khong safeLookAt, khong va cham
 			local function getSeaBeastStandCFrame(targetRoot)
-				return safeLookAt(targetRoot.Position + Vector3.new(0, 120, 0), targetRoot.Position)
+				return targetRoot.CFrame * CFrame.new(0, 350, 0)
 			end
 
 		local character = Players.LocalPlayer.Character
@@ -3744,6 +3754,7 @@ local function resetFailedTrialAttempt(reason)
 	trialAutomationBusy = false
 	trialRaceLock = nil
 	trialStartedAt = 0
+	trialHumanFirstMobAt = 0
 	trialCompletedHoldUntil = 0
 	trialAttemptCharacter = nil
 	trialRetryPending = true
@@ -3786,6 +3797,7 @@ function isNearOwnTrialArena()
 		if not stillNear then
 			trialRaceLock = nil
 			trialStartedAt = 0
+			trialHumanFirstMobAt = 0
 		end
 	end
 	local inside = root ~= nil and humanoid ~= nil and humanoid.Health > 0
@@ -3808,6 +3820,7 @@ function markOwnTrialCompleted(reason)
 	trialCompletedHoldUntil = math.huge
 	trialRaceLock = nil
 	trialStartedAt = 0
+	trialHumanFirstMobAt = 0
 	trialTimerSeen = false
 	trialTimerLostAt = 0
 	_G.SHOULDSPAMSKILLS = false
