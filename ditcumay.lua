@@ -23,8 +23,12 @@ getgenv().Config = {
 	["Pair Requeue Delay"] = 15,
 	["Pair Force Temple Interval"] = 0.8,
 	["Trial Barrier Timeout"] = 50,
-	["Fish Trial Stand Height"] = 25,
+	["Fish Trial Stand Height"] = 60,
 	["Fish Trial Stand Offset"] = 35,
+	["Human Trial Kill Delay"] = 0.45,
+	["Human Trial Post Kill Delay"] = 0.25,
+	["Human Trial Wave Delay"] = 1.2,
+	["Human Trial Hover Height"] = 10,
 	["Full Moon API URL"] = "https://vortexz-hub.xyz/fullmoon",
 	["Full Moon Poll Interval"] = 15,
 	["Full Moon Cycle Seconds"] = 600,
@@ -3479,25 +3483,30 @@ function runCurrentRaceTrial(race, trialLocation)
 		topos(floor.CFrame * CFrame.new(0, 500, 0))
 		return true
 	elseif race == "Human" or race == "Ghoul" then
-		-- Khong danh melee: bay toi tung quai roi set Health = 0 truc tiep.
+		-- Khong danh melee: bay toi tung quai roi set Health = 0 truc tiep co delay tranh ghost mob.
 		_G.TYRANT_FARMING = false
 		AttackConfig.AutoClickEnabled = false
-		local orbitHeight = math.max(8, math.min(20, tonumber(getgenv().Config["Trial Orbit Height"]) or 15))
+		local hoverHeight = math.max(4, math.min(15, tonumber(getgenv().Config["Human Trial Hover Height"]) or 10))
+		local killDelay = math.max(0.2, math.min(2.0, tonumber(getgenv().Config["Human Trial Kill Delay"]) or 0.45))
+		local postKillDelay = math.max(0.1, math.min(1.0, tonumber(getgenv().Config["Human Trial Post Kill Delay"]) or 0.25))
+		local waveDelay = math.max(0.5, math.min(3.0, tonumber(getgenv().Config["Human Trial Wave Delay"]) or 1.2))
 		local deadline = tick() + 120
 		while tick() < deadline do
 			local enemy = getNearestTrialEnemy(trialLocation)
 			if not enemy then
+				-- Reset wave timer khi khong co mob de wave tiep theo co delay khoi tao
+				trialHumanFirstMobAt = 0
 				status("Trial of Strength - waiting for mobs...")
-				topos(trialLocation.CFrame * CFrame.new(0, 20, 0))
+				topos(trialLocation.CFrame * CFrame.new(0, 10, 0))
 				return true
 			end
-			-- Doi 2s tu luc dau tien thay mob (persistent giua cac lan goi)
+			-- Doi waveDelay tu luc bat dau phat hien mob moi cua wave
 			if trialHumanFirstMobAt == 0 then
 				trialHumanFirstMobAt = tick()
-				status("Trial of Strength - mob found, waiting 2s...")
+				status("Trial of Strength - mob found, waiting " .. string.format("%.1f", waveDelay) .. "s...")
 				return true
 			end
-			if tick() - trialHumanFirstMobAt < 2 then
+			if tick() - trialHumanFirstMobAt < waveDelay then
 				return true
 			end
 			local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
@@ -3506,12 +3515,16 @@ function runCurrentRaceTrial(race, trialLocation)
 				or enemy:FindFirstChild("Head")
 				or enemy.PrimaryPart
 			local humanoid = enemy:FindFirstChildOfClass("Humanoid")
-			if not enemyRoot or not humanoid then
+			if not enemyRoot or not humanoid or humanoid.Health <= 0 then
 				task.wait(0.1)
 			else
 				local mobName = tostring(enemy.Name or "Mob")
 				local attemptCharacter = Players.LocalPlayer.Character
 				module:stopTween()
+
+				-- Snap treo tren dau mob dung 10 studs va giu vi tri trong killDelay truoc khi set Health = 0 (tranh ghost mob)
+				local snapStart = tick()
+				local healthKilled = false
 				repeat
 					task.wait(0.03)
 					enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
@@ -3520,22 +3533,26 @@ function runCurrentRaceTrial(race, trialLocation)
 						or enemy:FindFirstChild("Head")
 						or enemy.PrimaryPart
 					humanoid = enemy:FindFirstChildOfClass("Humanoid")
-					if enemyRoot then
+					if enemyRoot and enemyRoot.Parent then
 						local char = Players.LocalPlayer.Character
 						local myRoot = char and char:FindFirstChild("HumanoidRootPart")
-						if myRoot and enemyRoot.Parent then
+						if myRoot then
 							pcall(function()
-								-- Snap sát mob (offset nhỏ tránh clip vào body), lock liên tục mỗi tick
-								local snapPos = enemyRoot.Position + Vector3.new(3, 0, 3)
-								myRoot.CFrame = CFrame.new(snapPos)
+								-- Treo tren dau mob 10 studs, nhin thang xuong mob
+								local snapPos = enemyRoot.Position + Vector3.new(0, hoverHeight, 0)
+								myRoot.CFrame = safeLookAt(snapPos, enemyRoot.Position)
 								myRoot.Velocity = Vector3.zero
 								myRoot.AssemblyLinearVelocity = Vector3.zero
 							end)
 						end
-						if humanoid and humanoid.Health > 0 then
-							pcall(function()
-								humanoid.Health = 0
-							end)
+						-- Chi set Health = 0 sau khi da lock du killDelay
+						if not healthKilled and (tick() - snapStart >= killDelay) then
+							if humanoid and humanoid.Health > 0 then
+								pcall(function()
+									humanoid.Health = 0
+								end)
+								healthKilled = true
+							end
 						end
 					end
 				until Players.LocalPlayer.Character ~= attemptCharacter
@@ -3543,8 +3560,13 @@ function runCurrentRaceTrial(race, trialLocation)
 					or not attemptCharacter:FindFirstChildOfClass("Humanoid")
 					or attemptCharacter:FindFirstChildOfClass("Humanoid").Health <= 0
 					or not enemy.Parent or not enemyRoot or not humanoid or humanoid.Health <= 0
+
+				-- Post-kill settle delay de server dong bo trang thai quai chet va chuyen wave
+				if postKillDelay > 0 then
+					task.wait(postKillDelay)
+				end
 			end
-			task.wait(0.1)
+			task.wait(0.05)
 		end
 		AttackConfig.AutoClickEnabled = true
 		return true
@@ -3622,10 +3644,13 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
-				-- Dung co dinh 350 units tren SeaBeast (CFrame offset), khong safeLookAt, khong va cham
-			local function getSeaBeastStandCFrame(targetRoot)
-				return targetRoot.CFrame * CFrame.new(0, 350, 0)
-			end
+		-- Tinh vi tri dung co dinh theo WORLD SPACE (khong nhan CFrame xoay cua Sea Beast tranh catapult)
+		local standHeight = math.max(30, math.min(100, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 60))
+		local function getSeaBeastStandCFrame(targetRoot)
+			local bPos = targetRoot.Position
+			local standPos = Vector3.new(bPos.X, bPos.Y + standHeight, bPos.Z)
+			return safeLookAt(standPos, bPos)
+		end
 
 		local character = Players.LocalPlayer.Character
 		local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
@@ -3639,6 +3664,19 @@ function runCurrentRaceTrial(race, trialLocation)
 			return true
 		end
 
+		-- Ham don sach cac BodyMover/Constraint sinh ra tu skill dash/fling
+		local function clearSkillForces(char)
+			if not char then return end
+			for _, desc in ipairs(char:GetDescendants()) do
+				if desc:IsA("BodyVelocity") or desc:IsA("BodyPosition") or desc:IsA("BodyGyro")
+					or desc:IsA("BodyAngularVelocity") or desc:IsA("BodyForce")
+					or desc:IsA("LinearVelocity") or desc:IsA("VectorForce")
+					or desc:IsA("AlignPosition") or desc:IsA("AlignOrientation") then
+					pcall(function() desc:Destroy() end)
+				end
+			end
+		end
+
 		-- Equip vu khi tot nhat
 		equipTrialCombatTool()
 		pcall(function() CommF_:InvokeServer("Buso") end)
@@ -3650,16 +3688,43 @@ function runCurrentRaceTrial(race, trialLocation)
 		local loopCount = 0
 		setTweenNoclip(true)
 
-		-- Khoa CFrame moi Heartbeat (moi frame) de skill knockback khong the vang nhan vat ra
+		-- Khoa vi tri lien tuc o ca Stepped (truoc physics) va Heartbeat (sau physics) de chong vang ra khoi arena
 		local lockActive = true
-		local lockConnection = RunService.Heartbeat:Connect(function()
+		local steppedConn = RunService.Stepped:Connect(function()
 			if not lockActive then return end
-			local r = attemptCharacter and attemptCharacter:FindFirstChild("HumanoidRootPart")
+			local char = Players.LocalPlayer.Character
+			local r = char and char:FindFirstChild("HumanoidRootPart")
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if r and root and root.Parent then
+				clearSkillForces(char)
+				if hum then
+					pcall(function()
+						hum.Sit = false
+						hum.PlatformStand = false
+					end)
+				end
+				local targetCF = getSeaBeastStandCFrame(root)
+				r.CFrame = targetCF
+				r.Velocity = Vector3.zero
+				pcall(function()
+					r.AssemblyLinearVelocity = Vector3.zero
+					r.AssemblyAngularVelocity = Vector3.zero
+				end)
+			end
+		end)
+
+		local heartbeatConn = RunService.Heartbeat:Connect(function()
+			if not lockActive then return end
+			local char = Players.LocalPlayer.Character
+			local r = char and char:FindFirstChild("HumanoidRootPart")
 			if r and root and root.Parent then
 				local targetCF = getSeaBeastStandCFrame(root)
 				r.CFrame = targetCF
 				r.Velocity = Vector3.zero
-				pcall(function() r.AssemblyLinearVelocity = Vector3.zero end)
+				pcall(function()
+					r.AssemblyLinearVelocity = Vector3.zero
+					r.AssemblyAngularVelocity = Vector3.zero
+				end)
 			end
 		end)
 
@@ -3673,6 +3738,19 @@ function runCurrentRaceTrial(race, trialLocation)
 				_G.TRIAL_SKILL_TARGET = root
 				_G.SKILL_AIM_TARGET = root
 				standCFrame = getSeaBeastStandCFrame(root)
+
+				-- Kiem tra neu vi tri nhan vat bi lech > 80 studs do skill bat ngo -> giat ve ngay lap tuc
+				local myChar = Players.LocalPlayer.Character
+				local myR = myChar and myChar:FindFirstChild("HumanoidRootPart")
+				if myR and (myR.Position - standCFrame.Position).Magnitude > 80 then
+					pcall(function()
+						clearSkillForces(myChar)
+						myR.CFrame = standCFrame
+						myR.Velocity = Vector3.zero
+						myR.AssemblyLinearVelocity = Vector3.zero
+					end)
+				end
+
 				if loopCount % 5 == 0 then
 					status("Trial of Water - slaying Sea Beast [" .. math.floor(currentHp) .. " HP]")
 				end
@@ -3686,7 +3764,8 @@ function runCurrentRaceTrial(race, trialLocation)
 			or not beast.Parent
 
 		lockActive = false
-		lockConnection:Disconnect()
+		if steppedConn then steppedConn:Disconnect() end
+		if heartbeatConn then heartbeatConn:Disconnect() end
 		setTweenNoclip(false)
 		_G.SHOULDSPAMSKILLS = false
 		_G.TRIAL_SKILL_TARGET = nil
@@ -3922,7 +4001,9 @@ function tryRunOwnRaceTrial()
 				return bestBeast, bestPart
 			end)()
 			if beastRoot then
-				local returnCF = beastRoot.CFrame * CFrame.new(0, 350, 0)
+				local standH = math.max(30, math.min(100, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 60))
+				local bPos = beastRoot.Position
+				local returnCF = safeLookAt(Vector3.new(bPos.X, bPos.Y + standH, bPos.Z), bPos)
 				status("Fish trial - knocked out of arena, returning to Sea Beast")
 				topos(returnCF)
 			end
