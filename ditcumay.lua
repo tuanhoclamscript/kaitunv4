@@ -1083,11 +1083,13 @@ end
 
 function getFullMoonTimeRemaining()
 	local moonPhase = tonumber(game:GetService("Lighting"):GetAttribute("MoonPhase"))
-	local isFM = (moonPhase == 5)
 
 	local clockTime = tonumber(game:GetService("Lighting").ClockTime) or 12
 	clockTime = clockTime % 24
 	local isNight = (clockTime >= 18 or clockTime < 5)
+
+	-- MoonPhase = 5 chi co nghia la FM khi dang ban dem; ban ngay thi FM da ket thuc
+	local isFM = (moonPhase == 5) and isNight
 
 	-- Fallback: dung moonTexture chi khi dang la ban dem va moonPhase chua san sang
 	if not isFM and isNight and moonPhase == nil then
