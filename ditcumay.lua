@@ -1896,7 +1896,12 @@ task.spawn(function()
 			local hubAssignmentActive = type(hubAssignment) == "table"
 				and tick() - (tonumber(hubAssignment.receivedAt) or 0) < 900
 			if needsIndependentWork then
-				matchState.assigned = false
+				-- Huy assignment va thong bao Hub de giai phong Helper
+				if hubAssignmentActive then
+					pcall(releaseCurrentGroup, 'main_needs_training')
+				else
+					matchState.assigned = false
+				end
 			elseif hubAssignmentActive then
 				-- applyHubAssignment owns the group fields while the Hub assignment is active.
 				matchState.assigned = true
@@ -3552,6 +3557,7 @@ function runCurrentRaceTrial(race, trialLocation)
 			local character = Players.LocalPlayer.Character
 			local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
 			local bestBeast, bestPart, bestHealth, bestDistance = nil, nil, 0, math.huge
+			if not ownRoot then return nil, nil, 0 end
 
 			local function tryCandidate(candidate)
 				if not candidate:IsA("Model") or candidate == character then return end
@@ -4051,9 +4057,18 @@ function runTrialCompletionBarrier()
 			barrierProgressAt = tick()
 		end
 		local waiting = math.floor(tick() - barrierProgressAt)
-		if tick() - barrierProgressAt > TRIAL_BARRIER_TIMEOUT then
-			status("Trial barrier timeout - resetting for next trial")
-			resetTrialBarrierState()
+		-- Helper chỉ cần đợi FFA tối đa 50s; Main đợi tối đa 90s (hoặc config nếu cao hơn).
+		-- Nếu FFA không xuất hiện, Helper tự giải phóng để Hub re-pair cho nhóm khác.
+		local roleTimeout = isHelperRole and math.min(50, TRIAL_BARRIER_TIMEOUT)
+			or math.min(90, TRIAL_BARRIER_TIMEOUT)
+		if tick() - barrierProgressAt > roleTimeout then
+			if isHelperRole then
+				pcall(releaseCurrentGroup, 'helper_ffa_timeout')
+				status("Helper FFA timeout - releasing for re-pair")
+			else
+				status("Trial barrier timeout - resetting for next trial")
+				resetTrialBarrierState()
+			end
 			return
 		end
 		status("Trial done - holding in Temple, waiting FFA signal (" .. tostring(waiting) .. "s)")
@@ -4077,13 +4092,17 @@ function runTrialCompletionBarrier()
 			pcall(function() humanoid.Health = 0 end)
 			pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Dead) end)
 			status("Helper reset - Main takes the gear")
+			-- Giai phong assignment ngay sau khi sacrifice: Main tu handle FFA,
+			-- Helper khong can doi 20s nua, Hub co the re-pair ngay.
+			pcall(releaseCurrentGroup, 'helper_sacrificed')
 			return
 		end
-		if not isFFAActive() and tick() - trialCycleDoneAt > 20 then
-			resetTrialBarrierState()
-			status("Helper waiting next Trial cycle")
-		end
-		return
+	\t-- helperSacrificeDone=true nhung releaseCurrentGroup chua duoc goi (edge case)
+	\tif tick() - trialCycleDoneAt > 15 then
+	\t\tpcall(releaseCurrentGroup, 'helper_barrier_timeout')
+	\t\tstatus("Helper barrier timeout - releasing for re-pair")
+	\tend
+	\treturn
 	end
 
 	-- Main: fight FFA if opponents remain, then claim gear
@@ -6594,7 +6613,14 @@ task.spawn(function()
 			local postTrialState = getV4Status(false)
 			if postTrialState and (postTrialState.needsTraining or postTrialState.needsPurchase or postTrialState.complete) then
 				resetTrialBarrierState()
-				matchState.assigned = false
+				-- Release group de Hub giai phong Helper ngay lap tuc
+				if isUper and isMyUpgearTurn() then
+					local rr = postTrialState.needsTraining and 'post_trial_training'
+					\tor (postTrialState.needsPurchase and 'post_trial_upgrade' or 'race_v4_completed')
+					pcall(releaseCurrentGroup, rr)
+				else
+					matchState.assigned = false
+				end
 				pcall(runWaitingAccountWork)
 			elseif not matchState.assigned then
 				-- Hub đã cancel assignment (member timeout / expired) trong lúc
@@ -6646,7 +6672,12 @@ task.spawn(function()
 			local mainFinishingTrial = isUper and isMyUpgearTurn()
 				and (pairTrialCycleStarted or pairV3ActivatedAt > 0 or handledRoundId ~= "")
 			if needsIndependentWork and not mainFinishingTrial then
-				matchState.assigned = false
+				local ha2 = getgenv().__KAITUN_HUB_ASSIGNMENT
+				if type(ha2) == 'table' and tick() - (tonumber(ha2.receivedAt) or 0) < 900 then
+					pcall(releaseCurrentGroup, 'main_needs_training')
+				else
+					matchState.assigned = false
+				end
 			end
 		end
 		if not matchState or not matchState.assigned then
@@ -7800,9 +7831,10 @@ task.spawn(function()
 			return "IN_TRIAL"
 		end
 		local assignment = getgenv().__KAITUN_HUB_ASSIGNMENT
-		if type(assignment) == "table"
+		local assignmentActive = type(assignment) == "table"
 			and tick() - (tonumber(assignment.receivedAt) or 0) < 900
-		then
+		local mainTrainingOrBusy = v4State and (v4State.needsTraining or v4State.needsPurchase)
+		if assignmentActive and not mainTrainingOrBusy then
 			return "MATCHED"
 		end
 		if role == "helper" then
@@ -7851,7 +7883,7 @@ task.spawn(function()
 		local targetJobId = readJobId(message.targetJobId or payload.targetJobId)
 		local targetPlaceId = readPlaceId(message.targetPlaceId or payload.targetPlaceId)
 		targetJobId = targetJobId or ""
-		if not includesLocalPlayer or #memberNames ~= 3 or leader == "" or groupId == ""
+		if not includesLocalPlayer or #memberNames < 2 or leader == "" or groupId == ""
 			or targetJobId == "" or not targetPlaceId
 		then
 			return false
