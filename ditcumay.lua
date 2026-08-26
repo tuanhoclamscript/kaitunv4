@@ -23,7 +23,7 @@ getgenv().Config = {
 	["Pair Requeue Delay"] = 15,
 	["Pair Force Temple Interval"] = 0.8,
 	["Trial Barrier Timeout"] = 50,
-	["Fish Trial Stand Height"] = 25,
+	["Fish Trial Stand Height"] = 350,
 	["Fish Trial Stand Offset"] = 35,
 	["Human Trial Kill Delay"] = 0.45,
 	["Human Trial Post Kill Delay"] = 0.25,
@@ -3667,12 +3667,10 @@ function runCurrentRaceTrial(race, trialLocation)
 		_G.SHOULDSPAMSKILLS = true
 		_G.TRIAL_SKILL_TARGET = nil
 
-		-- Tinh vi tri dung co dinh theo WORLD SPACE ngay tren dau Head/Hitbox cua Sea Beast (cach Head 20-25 studs, hoan toan tren mat nuoc va trong tam tha skill)
-		local standHeight = math.max(15, math.min(50, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 25))
+		-- Vi tri dung tren Sea Beast theo yeu cau: targetRoot.CFrame * CFrame.new(0, 350, 0)
+		local standHeight = tonumber(getgenv().Config["Fish Trial Stand Height"]) or 350
 		local function getSeaBeastStandCFrame(targetRoot)
-			local bPos = targetRoot.Position
-			local standPos = Vector3.new(bPos.X, bPos.Y + standHeight, bPos.Z)
-			return safeLookAt(standPos, bPos)
+			return targetRoot.CFrame * CFrame.new(0, standHeight, 0)
 		end
 
 		local beast, root, healthVal = findTrialSeaBeast()
@@ -4014,11 +4012,9 @@ function tryRunOwnRaceTrial()
 		if trialRaceLock == "Fishman" and trialStartedAt > 0 and getTrialTimerVisible() then
 			local beast, beastRoot = findTrialSeaBeast()
 			if beastRoot then
-				local standH = math.max(15, math.min(50, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 25))
-				local bPos = beastRoot.Position
-				local returnCF = safeLookAt(Vector3.new(bPos.X, bPos.Y + standH, bPos.Z), bPos)
-				status("Fish trial - returning above Sea Beast Head")
-				topos(returnCF)
+				local standH = tonumber(getgenv().Config["Fish Trial Stand Height"]) or 350
+				status("Fish trial - returning above Sea Beast")
+				topos(beastRoot.CFrame * CFrame.new(0, standH, 0))
 			end
 		end
 		return false
