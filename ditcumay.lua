@@ -23,7 +23,7 @@ getgenv().Config = {
 	["Pair Requeue Delay"] = 15,
 	["Pair Force Temple Interval"] = 0.8,
 	["Trial Barrier Timeout"] = 50,
-	["Fish Trial Stand Height"] = 60,
+	["Fish Trial Stand Height"] = 250,
 	["Fish Trial Stand Offset"] = 35,
 	["Human Trial Kill Delay"] = 0.45,
 	["Human Trial Post Kill Delay"] = 0.25,
@@ -3251,20 +3251,17 @@ function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 	local startPos = root.Position
 	local totalDist = (startPos - targetPos).Magnitude
 
-	-- Smart teleport: neu khoang cach > 5000 thi tim duong di qua waypoints
+	-- Neu khoang cach qua xa (>5000), tween noclip thang toi target thay vi BFS reset-hop
+	-- qua waypoints trung gian. topos() khong bi gioi han khoang cach nen nhanh hon nhieu.
 	if totalDist > SMART_TELE_MAX_HOP then
-		local path = findSmartTelePath(startPos, targetPos, SMART_TELE_MAX_HOP)
-		if path and #path > 0 then
-			for hopIdx, waypoint in ipairs(path) do
-				status("Smart tele hop " .. hopIdx .. "/" .. #path .. " → " .. tostring(waypoint.Name))
-				local hopCFrame = typeof(waypoint.Position) == "CFrame" and waypoint.Position
-					or CFrame.new(waypoint.Position)
-				if not doSingleResetHop(hopCFrame, waypoint.Name) then
-					status("Smart tele hop failed at " .. tostring(waypoint.Name))
-					break
-				end
-				task.wait(0.3)
-			end
+		status("Long distance (" .. math.floor(totalDist) .. " studs) → tween direct to island")
+		topos(target)
+		task.wait(0.3)
+		character = Players.LocalPlayer.Character
+		root = character and character:FindFirstChild("HumanoidRootPart")
+		humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if not root or not humanoid or humanoid.Health <= 0 then
+			return false
 		end
 	end
 
@@ -3571,85 +3568,24 @@ function runCurrentRaceTrial(race, trialLocation)
 		AttackConfig.AutoClickEnabled = true
 		return true
 	elseif race == "Fishman" then
-		_G.SHOULDSPAMSKILLS = false
+		_G.SHOULDSPAMSKILLS = true
 		_G.TRIAL_SKILL_TARGET = nil
 
-		-- Tim Sea Beast gan nhat theo distance (uu tien folder SeaBeasts, fallback workspace scan)
-		local function findTrialSeaBeast()
-			local character = Players.LocalPlayer.Character
-			local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
-			local bestBeast, bestPart, bestHealth, bestDistance = nil, nil, 0, math.huge
-			if not ownRoot then return nil, nil, 0 end
-
-			local function tryCandidate(candidate)
-				if not candidate:IsA("Model") or candidate == character then return end
-				local candidateRoot = candidate:FindFirstChild("HumanoidRootPart")
-					or candidate:FindFirstChild("Hitbox")
-					or candidate:FindFirstChild("Head")
-					or candidate:FindFirstChild("Torso")
-					or candidate.PrimaryPart
-					or candidate:FindFirstChildWhichIsA("BasePart")
-				if not candidateRoot then return end
-				local hum = candidate:FindFirstChildOfClass("Humanoid")
-				local healthVal = candidate:FindFirstChild("Health")
-				local hp = (hum and hum.Health)
-					or (healthVal and healthVal:IsA("ValueBase") and tonumber(healthVal.Value))
-					or 100000
-				if hp <= 0 then return end
-				local dist = ownRoot and (ownRoot.Position - candidateRoot.Position).Magnitude or 0
-				if dist < 4000 and dist < bestDistance then
-					bestBeast = candidate
-					bestPart = candidateRoot
-					bestHealth = hp
-					bestDistance = dist
-				end
-			end
-
-			-- Uu tien folder SeaBeasts chinh thuc
-			local seaBeasts = workspace:FindFirstChild("SeaBeasts")
-			if seaBeasts then
-				for _, child in ipairs(seaBeasts:GetChildren()) do
-					tryCandidate(child)
-				end
-			end
-
-			-- Neu chua tim duoc, scan workspace top-level va cac folder phu
-			if not bestBeast then
-				for _, child in ipairs(workspace:GetChildren()) do
-					local name = string.lower(tostring(child.Name or ""))
-					if name:find("seabeast") or name:find("sea beast") or name:find("leviathan") then
-						tryCandidate(child)
-					end
-				end
-				for _, folderName in ipairs({"Enemies", "Characters", "Mobs"}) do
-					local folder = workspace:FindFirstChild(folderName)
-					if folder and not bestBeast then
-						for _, child in ipairs(folder:GetChildren()) do
-							local name = string.lower(tostring(child.Name or ""))
-							if name:find("seabeast") or name:find("sea beast") or name:find("leviathan") then
-								tryCandidate(child)
-							end
-						end
-					end
-				end
-			end
-
-			return bestBeast, bestPart, bestHealth
+		-- Tinh vi tri dung co dinh theo WORLD SPACE o do cao an toan tren khong (tranh cham mat nuoc)
+		local standHeight = math.max(150, math.min(400, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 250))
+		local function getSeaBeastStandCFrame(targetRoot)
+			local bPos = targetRoot.Position
+			local standPos = Vector3.new(bPos.X, bPos.Y + standHeight, bPos.Z)
+			return safeLookAt(standPos, bPos)
 		end
 
 		local beast, root, healthVal = findTrialSeaBeast()
 		if not beast or not root then
 			status("Trial of Water - searching Sea Beast")
-			task.wait(0.5)
+			-- Treo cao tren khong o tam arena trong luc tim Sea Beast
+			topos(trialLocation.CFrame * CFrame.new(0, standHeight, 0))
+			task.wait(0.4)
 			return true
-		end
-
-		-- Tinh vi tri dung co dinh theo WORLD SPACE (khong nhan CFrame xoay cua Sea Beast tranh catapult)
-		local standHeight = math.max(30, math.min(100, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 60))
-		local function getSeaBeastStandCFrame(targetRoot)
-			local bPos = targetRoot.Position
-			local standPos = Vector3.new(bPos.X, bPos.Y + standHeight, bPos.Z)
-			return safeLookAt(standPos, bPos)
 		end
 
 		local character = Players.LocalPlayer.Character
@@ -4001,14 +3937,17 @@ function tryRunOwnRaceTrial()
 				return bestBeast, bestPart
 			end)()
 			if beastRoot then
-				local standH = math.max(30, math.min(100, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 60))
+				local standH = math.max(150, math.min(400, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 250))
 				local bPos = beastRoot.Position
 				local returnCF = safeLookAt(Vector3.new(bPos.X, bPos.Y + standH, bPos.Z), bPos)
-				status("Fish trial - knocked out of arena, returning to Sea Beast")
+				status("Fish trial - returning above Sea Beast")
 				topos(returnCF)
 			end
 		end
 		return false
+	end
+	if race == "Fishman" or trialRaceLock == "Fishman" then
+		_G.SHOULDSPAMSKILLS = true
 	end
 	pairTrialCycleStarted = true
 	if trialAutomationBusy then
@@ -7220,46 +7159,58 @@ task.spawn(function()
 	local function spamAllReadySkills(toolName)
 		local skillsGui = Players.LocalPlayer.PlayerGui:FindFirstChild("Main")
 			and Players.LocalPlayer.PlayerGui.Main:FindFirstChild("Skills")
-		local ui = skillsGui and skillsGui:FindFirstChild(toolName)
+		local ui = skillsGui and (skillsGui:FindFirstChild(toolName) or (function()
+			for _, c in ipairs(skillsGui:GetChildren()) do
+				if c:IsA("GuiObject") and c.Visible and c.Name ~= "Template" then
+					return c
+				end
+			end
+			return nil
+		end)())
 		if not ui then return 0 end
 		local fired = 0
 		for _, vl in pairs(ui:GetChildren()) do
 			if isvalidnameui[vl.Name] then
 				local cdFrame = vl:FindFirstChild("Cooldown")
 				local titleFrame = vl:FindFirstChild("Title")
-				if cdFrame and titleFrame then
-					local titleReady = titleFrame.TextColor3 == Color3.new(1, 1, 1)
-						or titleFrame.TextColor3 == Color3.fromRGB(255, 255, 255)
-					local cdReady = cdFrame.Size.X.Scale == 0 and cdFrame.Size.X.Offset == 0
-					if titleReady and cdReady then
-						aimAtTrialSkillTarget()
-						task.wait(0.02)
-						if vl.Name == "V" then
-							if not fruits[ui.Name] then
-								VirtualInputManager:SendKeyEvent(true, "V", false, game)
-								task.wait(0.05)
-								VirtualInputManager:SendKeyEvent(false, "V", false, game)
-								fired = fired + 1
-							end
-						else
-							VirtualInputManager:SendKeyEvent(true, vl.Name, false, game)
-							task.wait(0.05)
-							VirtualInputManager:SendKeyEvent(false, vl.Name, false, game)
+				local cdReady = not cdFrame or not cdFrame.Visible
+					or (cdFrame.Size.X.Scale <= 0.05 and cdFrame.Size.X.Offset <= 1)
+				local titleReady = not titleFrame or titleFrame.TextTransparency < 0.5
+
+				if cdReady and titleReady then
+					aimAtTrialSkillTarget()
+					task.wait(0.01)
+					if vl.Name == "V" then
+						if not fruits[ui.Name] then
+							VirtualInputManager:SendKeyEvent(true, "V", false, game)
+							task.wait(0.04)
+							VirtualInputManager:SendKeyEvent(false, "V", false, game)
 							fired = fired + 1
 						end
-						task.wait(0.03)
+					else
+						VirtualInputManager:SendKeyEvent(true, vl.Name, false, game)
+						task.wait(0.04)
+						VirtualInputManager:SendKeyEvent(false, vl.Name, false, game)
+						fired = fired + 1
 					end
+					task.wait(0.02)
 				end
 			end
 		end
 		return fired
 	end
 
-	while task.wait(0.05) do
+	while task.wait(0.03) do
 		if _G.SHOULDSPAMSKILLS then
 			local char = Players.LocalPlayer.Character
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if hum and hum.Health > 0 then
+				-- Uu tien spam skill cua vu khi dang cam tren tay
+				local currentEquipped = char:FindFirstChildOfClass("Tool")
+				if currentEquipped and isvalidtooltip[currentEquipped.ToolTip] then
+					spamAllReadySkills(currentEquipped.Name)
+				end
+
 				local meleeT = findToolByTip("Melee")
 				local swordT = findToolByTip("Sword")
 				local fruitT = findToolByTip("Blox Fruit")
@@ -7267,7 +7218,7 @@ task.spawn(function()
 				for _, weaponTip in ipairs({"Melee", "Sword", "Blox Fruit"}) do
 					if not _G.SHOULDSPAMSKILLS then break end
 					local tool = weaponTip == "Melee" and meleeT or (weaponTip == "Sword" and swordT or fruitT)
-					if tool then
+					if tool and (not currentEquipped or tool.Name ~= currentEquipped.Name) then
 						local equipped = equipTool(tool)
 						if equipped then
 							spamAllReadySkills(equipped.Name)
