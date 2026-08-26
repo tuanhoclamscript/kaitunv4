@@ -23,7 +23,7 @@ getgenv().Config = {
 	["Pair Requeue Delay"] = 15,
 	["Pair Force Temple Interval"] = 0.8,
 	["Trial Barrier Timeout"] = 50,
-	["Fish Trial Stand Height"] = 250,
+	["Fish Trial Stand Height"] = 25,
 	["Fish Trial Stand Offset"] = 35,
 	["Human Trial Kill Delay"] = 0.45,
 	["Human Trial Post Kill Delay"] = 0.25,
@@ -3443,6 +3443,102 @@ trialHumanFirstMobAt = 0
 local equipTrialCombatTool
 local TRIAL_BARRIER_TIMEOUT = math.max(60, tonumber(getgenv().Config["Trial Barrier Timeout"]) or 240)
 
+-- Tim part muc tieu tot nhat cua Sea Beast: uu tien Head, Hitbox to nhat hoac part cao nhat tren mat nuoc
+local function getSeaBeastTargetPart(model)
+	if not model or not model:IsA("Model") then return nil end
+	local head = model:FindFirstChild("Head")
+	local hitbox = model:FindFirstChild("Hitbox")
+	local hrp = model:FindFirstChild("HumanoidRootPart")
+
+	-- 1. Uu tien Head neu co
+	if head and head:IsA("BasePart") then
+		return head
+	end
+	-- 2. Uu tien Hitbox neu co
+	if hitbox and hitbox:IsA("BasePart") then
+		return hitbox
+	end
+	if hrp and hrp:IsA("BasePart") then
+		return hrp
+	end
+
+	-- 3. Tim BasePart co the tich lon nhat hoac Y cao nhat
+	local bestPart, bestScore = nil, -math.huge
+	for _, desc in ipairs(model:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			local name = string.lower(desc.Name)
+			if name:find("head") then
+				return desc
+			end
+			local vol = desc.Size.X * desc.Size.Y * desc.Size.Z
+			local score = vol + desc.Position.Y * 100
+			if score > bestScore then
+				bestScore = score
+				bestPart = desc
+			end
+		end
+	end
+	return bestPart or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+end
+
+-- Tim Sea Beast gan nhat (uu tien Head/Hitbox vi tri cao nhat de dung va aim)
+local function findTrialSeaBeast()
+	local character = Players.LocalPlayer.Character
+	local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
+	local bestBeast, bestPart, bestHealth, bestDistance = nil, nil, 0, math.huge
+	if not ownRoot then return nil, nil, 0 end
+
+	local function tryCandidate(candidate)
+		if not candidate or not candidate:IsA("Model") or candidate == character then return end
+		local candidateRoot = getSeaBeastTargetPart(candidate)
+		if not candidateRoot then return end
+		local hum = candidate:FindFirstChildOfClass("Humanoid")
+		local healthVal = candidate:FindFirstChild("Health")
+		local hp = (hum and hum.Health)
+			or (healthVal and healthVal:IsA("ValueBase") and tonumber(healthVal.Value))
+			or 100000
+		if hp <= 0 then return end
+		local dist = ownRoot and (ownRoot.Position - candidateRoot.Position).Magnitude or 0
+		if dist < 5000 and dist < bestDistance then
+			bestBeast = candidate
+			bestPart = candidateRoot
+			bestHealth = hp
+			bestDistance = dist
+		end
+	end
+
+	-- 1. Folder SeaBeasts chinh thuc
+	local seaBeasts = workspace:FindFirstChild("SeaBeasts")
+	if seaBeasts then
+		for _, child in ipairs(seaBeasts:GetChildren()) do
+			tryCandidate(child)
+		end
+	end
+
+	-- 2. Scan workspace top-level va cac folder phu
+	if not bestBeast then
+		for _, child in ipairs(workspace:GetChildren()) do
+			local name = string.lower(tostring(child.Name or ""))
+			if name:find("seabeast") or name:find("sea beast") or name:find("leviathan") or name:find("water") then
+				tryCandidate(child)
+			end
+		end
+		for _, folderName in ipairs({"Enemies", "Characters", "Mobs", "NPCs"}) do
+			local folder = workspace:FindFirstChild(folderName)
+			if folder and not bestBeast then
+				for _, child in ipairs(folder:GetChildren()) do
+					local name = string.lower(tostring(child.Name or ""))
+					if name:find("seabeast") or name:find("sea beast") or name:find("leviathan") or name:find("water") then
+						tryCandidate(child)
+					end
+				end
+			end
+		end
+	end
+
+	return bestBeast, bestPart, bestHealth
+end
+
 function runCurrentRaceTrial(race, trialLocation)
 	if tick() - lastTrialActionAt < 0.12 then
 		return true
@@ -3571,8 +3667,8 @@ function runCurrentRaceTrial(race, trialLocation)
 		_G.SHOULDSPAMSKILLS = true
 		_G.TRIAL_SKILL_TARGET = nil
 
-		-- Tinh vi tri dung co dinh theo WORLD SPACE o do cao an toan tren khong (tranh cham mat nuoc)
-		local standHeight = math.max(150, math.min(400, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 250))
+		-- Tinh vi tri dung co dinh theo WORLD SPACE ngay tren dau Head/Hitbox cua Sea Beast (cach Head 20-25 studs, hoan toan tren mat nuoc va trong tam tha skill)
+		local standHeight = math.max(15, math.min(50, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 25))
 		local function getSeaBeastStandCFrame(targetRoot)
 			local bPos = targetRoot.Position
 			local standPos = Vector3.new(bPos.X, bPos.Y + standHeight, bPos.Z)
@@ -3916,31 +4012,12 @@ function tryRunOwnRaceTrial()
 		-- Neu bi vang ra ngoai arena nhung timer van con (trials dang chay) ->
 		-- tween ve lai Sea Beast thay vi bo cuoc.
 		if trialRaceLock == "Fishman" and trialStartedAt > 0 and getTrialTimerVisible() then
-			local beast, beastRoot = (function()
-				local character = Players.LocalPlayer.Character
-				local ownRoot = character and character:FindFirstChild("HumanoidRootPart")
-				local bestBeast, bestPart, bestDist = nil, nil, math.huge
-				local seaBeasts = workspace:FindFirstChild("SeaBeasts")
-				if seaBeasts then
-					for _, child in ipairs(seaBeasts:GetChildren()) do
-						local r = child:FindFirstChild("HumanoidRootPart") or child:FindFirstChild("Hitbox") or child:FindFirstChild("Head") or child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
-						if r then
-							local hum = child:FindFirstChildOfClass("Humanoid")
-							local hp = hum and hum.Health or 100000
-							if hp > 0 then
-								local d = ownRoot and (ownRoot.Position - r.Position).Magnitude or 0
-								if d < bestDist then bestBeast, bestPart, bestDist = child, r, d end
-							end
-						end
-					end
-				end
-				return bestBeast, bestPart
-			end)()
+			local beast, beastRoot = findTrialSeaBeast()
 			if beastRoot then
-				local standH = math.max(150, math.min(400, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 250))
+				local standH = math.max(15, math.min(50, tonumber(getgenv().Config["Fish Trial Stand Height"]) or 25))
 				local bPos = beastRoot.Position
 				local returnCF = safeLookAt(Vector3.new(bPos.X, bPos.Y + standH, bPos.Z), bPos)
-				status("Fish trial - returning above Sea Beast")
+				status("Fish trial - returning above Sea Beast Head")
 				topos(returnCF)
 			end
 		end
