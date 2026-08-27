@@ -189,40 +189,47 @@ function FireDamageToTargets(targets)
 	if not targets or #targets == 0 then
 		return false
 	end
-
-	local firstHit = nil
-	local hitList = {}
+	local hitData = {
+		[1] = nil,
+		[2] = {},
+		[4] = "078da5141"
+	}
 	for _, enemy in ipairs(targets) do
 		if enemy and enemy.Parent then
-			local part = enemy:FindFirstChild("HumanoidRootPart")
-				or enemy:FindFirstChild("Head")
+			local hitPart = enemy:FindFirstChild("Head")
+				or enemy:FindFirstChild("HumanoidRootPart")
+				or enemy:FindFirstChild("UpperTorso")
+				or enemy:FindFirstChild("Torso")
 				or enemy.PrimaryPart
-			if part then
-				if not firstHit then firstHit = part end
-				hitList[#hitList + 1] = { enemy, part }
+			local hrp = enemy:FindFirstChild("HumanoidRootPart")
+				or enemy:FindFirstChild("UpperTorso")
+				or enemy:FindFirstChild("Torso")
+				or hitPart
+			if hitPart and hrp then
+				if not hitData[1] then
+					hitData[1] = hitPart
+				end
+				table.insert(hitData[2], { [1] = enemy, [2] = hrp })
+				table.insert(hitData[2], enemy)
 			end
 		end
 	end
-	if not firstHit or #hitList == 0 then
+	if not hitData[1] or #hitData[2] == 0 then
 		return false
 	end
 
-	-- hitData layout: { firstHit, hitList } -> unpack -> FireServer(firstHit, hitList)
-	local hitData = { firstHit, hitList }
-
-	-- 1. RegisterAttack (cooldown only, matching original AttackAll format)
+	-- 1. RegisterAttack: 0 cooldown
 	pcall(function()
-		local cooldown = AttackConfig.AttackCooldown or 0.125
 		if RegisterAttack then
-			RegisterAttack:FireServer(cooldown)
+			RegisterAttack:FireServer(0)
 		end
 		local rawAttack = Net and Net:FindFirstChild("RE/RegisterAttack")
 		if rawAttack and rawAttack ~= RegisterAttack then
-			rawAttack:FireServer(cooldown)
+			rawAttack:FireServer(0)
 		end
 	end)
 
-	-- 2. RegisterHit
+	-- 2. RegisterHit: unpack(hitData)
 	pcall(function()
 		if RegisterHit then
 			RegisterHit:FireServer(unpack(hitData))
@@ -1491,7 +1498,7 @@ local AttackConfig = {
 		"RightHand",
 		"LeftHand"
 	},
-	AutoClickEnabled = false
+	AutoClickEnabled = true
 }
 
 local FastAttack = {}
@@ -1646,6 +1653,11 @@ function FastAttack:ShootInTarget(TargetPosition)
 			ShootGunEvent:FireServer(TargetPosition)
 		end
 		self.ShootDebounce = tick()
+	else
+		VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+		task.wait(0.05)
+		VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+		self.ShootDebounce = tick()
 	end
 end
 
@@ -1680,6 +1692,15 @@ function FastAttack:UseNormalClick(Character, Humanoid, Cooldown, Combo)
 		pcall(function()
 			local tool = Character:FindFirstChildOfClass("Tool")
 			if tool then tool:Activate() end
+		end)
+		pcall(function()
+			local VirtualUser = game:GetService("VirtualUser")
+			VirtualUser:CaptureController()
+			VirtualUser:ClickButton1(Vector2.new(851, 158))
+		end)
+		pcall(function()
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
 		end)
 	end
 end
@@ -1735,9 +1756,13 @@ if previousAttackConnection then
 end
 local AttackInstance = FastAttack.new()
 local attackConnection = RunService.Stepped:Connect(function()
-	if not _G.TYRANT_FARMING then
+	-- _G.TYRANT_FARMING: khi farm Tyrant, TyrFastAttack la nguoi duy nhat
+	-- ban RegisterAttack/RegisterHit. Hai luong cung ban se bi server
+	-- rate-validate va drop het -> "attack loi".
+	if AttackConfig.AutoClickEnabled and not _G.TYRANT_FARMING then
 		pcall(function()
 			module:haki()
+			AttackInstance:Attack()
 		end)
 	end
 end)
@@ -1786,6 +1811,9 @@ end
 
 local lastExtractAttackAt = -math.huge
 local function extractAttack()
+	if not AttackConfig.AutoClickEnabled then
+		return false
+	end
 	if tick() - lastExtractAttackAt < AttackConfig.AttackCooldown then
 		return false
 	end
@@ -1793,8 +1821,35 @@ local function extractAttack()
 	if #targets == 0 then
 		return false
 	end
+
+	local firstHit = nil
+	local hitList = {}
+	for _, entity in ipairs(targets) do
+		local hitPart = entity:FindFirstChild("Head") or entity:FindFirstChild("HumanoidRootPart")
+		local entityRoot = entity:FindFirstChild("HumanoidRootPart")
+		if hitPart and entityRoot then
+			firstHit = firstHit or hitPart
+			-- Server doc hit list theo cap {entity, part} roi mot bang rong dem.
+			-- Day thang entity vao lam lech moi cap phia sau -> huy ca goi hit.
+			hitList[#hitList + 1] = { entity, entityRoot }
+			hitList[#hitList + 1] = {}
+		end
+	end
+	if not firstHit then
+		return false
+	end
+
+	-- RegisterAttack chi can mot lan cho moi goi hit, khong phai moi target.
+	local extractCombo = AttackInstance and AttackInstance:GetCombo() or 1
+	local extractCooldown = extractCombo >= (AttackConfig.MaxCombo or 4) and 0.9 or 0.4
+	pcall(function()
+		RegisterAttack:FireServer(extractCooldown, extractCombo)
+	end)
+	pcall(function()
+		RegisterHit:FireServer(firstHit, hitList, nil, "078da5141")
+	end)
 	lastExtractAttackAt = tick()
-	return FireDamageToTargets(targets)
+	return true
 end
 
 local extractAttackToken = {}
@@ -3166,19 +3221,7 @@ function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 	if not root or not humanoid or humanoid.Health <= 0 then
 		return false
 	end
-
-	-- Khong reset neu dang cam fruit hoac microchip raid
-	do
-		local equipped = character:FindFirstChildOfClass("Tool")
-		if equipped and equipped.ToolTip == "Blox Fruit" then
-			status("Reset blocked: holding fruit")
-			return false
-		end
-		if RaidCheckSpecialMicrochip() then
-			status("Reset blocked: holding raid microchip")
-			return false
-		end
-	end
+	module:stopTween()
 
 	-- Neu dang o trong Temple (rat xa) -> reset 1 phat de thoat ra truoc
 	local templeDistance = (root.Position - TEMPLE_ENTRY_POSITION).Magnitude
@@ -3208,30 +3251,12 @@ function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 	local startPos = root.Position
 	local totalDist = (startPos - targetPos).Magnitude
 
-	-- BFS: tim duong qua waypoints trung gian neu qua xa
-	local path = findSmartTelePath(startPos, targetPos)
-	if path == nil then
-		-- Khong tim duoc duong -> tween thang
-		status("Smart path not found → tween direct to [" .. tostring(islandName) .. "]")
+	-- Neu khoang cach qua xa (>5000), tween noclip thang toi target thay vi BFS reset-hop
+	-- qua waypoints trung gian. topos() khong bi gioi han khoang cach nen nhanh hon nhieu.
+	if totalDist > SMART_TELE_MAX_HOP then
+		status("Long distance (" .. math.floor(totalDist) .. " studs) → tween direct to island")
 		topos(target)
 		task.wait(0.3)
-		setTrainingSpawnPoint(target)
-		return true
-	end
-
-	-- Hop qua tung waypoint trung gian
-	for i, wp in ipairs(path) do
-		local wpPos = typeof(wp.Position) == "CFrame" and wp.Position.Position or wp.Position
-		status("Hop " .. i .. "/" .. #path .. " → " .. tostring(wp.Name))
-		local ok = doSingleResetHop(wpPos, wp.Name)
-		if not ok then
-			status("Hop failed at " .. tostring(wp.Name) .. " → tween to destination")
-			topos(target)
-			task.wait(0.3)
-			setTrainingSpawnPoint(target)
-			return true
-		end
-		-- refresh sau moi hop
 		character = Players.LocalPlayer.Character
 		root = character and character:FindFirstChild("HumanoidRootPart")
 		humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -3240,13 +3265,22 @@ function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 		end
 	end
 
-	-- Buoc cuoi: reset vao dich
-	status("Final reset → [" .. tostring(islandName) .. "]")
+	status("Reset teleport to [" .. tostring(islandName) .. "]")
+	character = Players.LocalPlayer.Character
+	root = character and character:FindFirstChild("HumanoidRootPart")
+	humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not root or not humanoid or humanoid.Health <= 0 then
+		return false
+	end
 	if forceReset or getgenv().Config["Reset Teleport After Trial"] ~= false then
-		local wantedSpawn = findSpawnNameNear(targetPos, 1500)
+		local wantedSpawn = findSpawnNameNear(target.Position, 1500)
+		local spawnOk = false
 		for attempt = 1, 3 do
-			setTrainingSpawnPoint(target)
-			if not wantedSpawn or getLastSpawnPointValue() == wantedSpawn then break end
+			spawnOk = setTrainingSpawnPoint(target) == true
+			if not wantedSpawn or getLastSpawnPointValue() == wantedSpawn then
+				spawnOk = true
+				break
+			end
 			status("Spawn point not applied (try " .. attempt .. ") - retrying")
 			task.wait(0.4)
 		end
@@ -3256,17 +3290,36 @@ function resetTeleportToTrainingIsland(forceReset, requestedIsland)
 			setTrainingSpawnPoint(target)
 			return true
 		end
-		local ok = doSingleResetHop(target, islandName)
-		if not ok then
-			topos(target)
-			task.wait(0.3)
+		local oldCharacter = character
+		pcall(function()
+			humanoid.Health = 0
+		end)
+		local deadline = tick() + 12
+		repeat
+			task.wait(0.15)
+			character = Players.LocalPlayer.Character
+		until tick() >= deadline or (character and character ~= oldCharacter
+			and character:FindFirstChild("HumanoidRootPart")
+			and character:FindFirstChildOfClass("Humanoid")
+			and character:FindFirstChildOfClass("Humanoid").Health > 0)
+		character = Players.LocalPlayer.Character
+		root = character and character:FindFirstChild("HumanoidRootPart")
+		if root then
+			local settleTime = math.max(0.2, tonumber(getgenv().Config["Reset Teleport Settle Time"]) or 0.45)
+			local holdUntil = tick() + settleTime
+			repeat
+				root.CFrame = target + Vector3.new(0, 6, 0)
+				RunService.Heartbeat:Wait()
+			until tick() >= holdUntil or not root.Parent
+			pcall(function()
+				CommF_:InvokeServer("SetSpawnPoint")
+			end)
 		end
 	end
-
 	character = Players.LocalPlayer.Character
 	root = character and character:FindFirstChild("HumanoidRootPart")
-	if not root or (root.Position - targetPos).Magnitude > 900 then
-		status("Final reset missed - tween to training island")
+	if not root or (root.Position - target.Position).Magnitude > 900 then
+		status("Reset spawn missed - moving to training island")
 		if not topos(target) then return false end
 	end
 	setTrainingSpawnPoint(target)
@@ -3283,6 +3336,7 @@ function beginPostTrialFarmTransition(reason)
 	postTrialTransitionInProgress = true
 	lastPostTrialTransitionAt = tick()
 	isCurrentlyTraining = true
+	AttackConfig.AutoClickEnabled = false
 	_G.SHOULDSPAMSKILLS = false
 	releaseCurrentGroup(reason or "post_trial")
 	local ok, result = pcall(resetTeleportToTrainingIsland)
@@ -3290,6 +3344,7 @@ function beginPostTrialFarmTransition(reason)
 		status("Reset teleport failed: " .. tostring(result):sub(1, 60))
 	end
 	invalidateV4Status()
+	AttackConfig.AutoClickEnabled = true
 	isCurrentlyTraining = false
 	postTrialTransitionInProgress = false
 	return ok and result == true
@@ -3523,6 +3578,7 @@ function runCurrentRaceTrial(race, trialLocation)
 	elseif race == "Human" or race == "Ghoul" then
 		-- Khong danh melee: bay toi tung quai roi set Health = 0 truc tiep co delay tranh ghost mob.
 		_G.TYRANT_FARMING = false
+		AttackConfig.AutoClickEnabled = false
 		local hoverHeight = math.max(4, math.min(15, tonumber(getgenv().Config["Human Trial Hover Height"]) or 10))
 		local killDelay = math.max(0.2, math.min(2.0, tonumber(getgenv().Config["Human Trial Kill Delay"]) or 0.45))
 		local postKillDelay = math.max(0.1, math.min(1.0, tonumber(getgenv().Config["Human Trial Post Kill Delay"]) or 0.25))
@@ -3605,6 +3661,7 @@ function runCurrentRaceTrial(race, trialLocation)
 			end
 			task.wait(0.05)
 		end
+		AttackConfig.AutoClickEnabled = true
 		return true
 	elseif race == "Fishman" then
 		_G.SHOULDSPAMSKILLS = true
@@ -3838,6 +3895,7 @@ local function resetFailedTrialAttempt(reason)
 	lastTempleDistance = math.huge
 	_G.SHOULDSPAMSKILLS = false
 	_G.TRIAL_SKILL_TARGET = nil
+	AttackConfig.AutoClickEnabled = true
 	pcall(function()
 		module:stopTween()
 	end)
@@ -4141,6 +4199,7 @@ function runTrialCompletionBarrier()
 	end
 
 	-- Main: fight FFA if opponents remain, then claim gear
+	AttackConfig.AutoClickEnabled = true
 	local nearest, nearestDistance = nil, math.huge
 	for other in pairs(getplayers(true)) do
 		local otherRoot = other:FindFirstChild("HumanoidRootPart")
@@ -4584,15 +4643,24 @@ function TyrLoadAttack()
 		if #targets == 0 then
 			return
 		end
-		local firstPart = targets[1][2]
-		local hitList = {}
+		local hitData = {
+			[1] = targets[1][2],
+			[2] = {},
+			[4] = "078da5141"
+		}
 		for _, target in ipairs(targets) do
-			hitList[#hitList + 1] = { target[1], target[2] }
+			hitData[2][#hitData[2] + 1] = {
+				target[1],
+				target[2]
+			}
 		end
-		local hitData = { firstPart, hitList }
 		pcall(function()
-			local cooldown = AttackConfig.AttackCooldown or 0.125
-			registerAttack:FireServer(cooldown)
+			local maxCombo = AttackConfig.MaxCombo or 4
+			local resetTime = AttackConfig.ComboResetTime or 1.5
+			tyrCombo = (tick() - tyrComboDebounce) <= resetTime and tyrCombo or 0
+			tyrCombo = tyrCombo >= maxCombo and 1 or tyrCombo + 1
+			tyrComboDebounce = tick()
+			registerAttack:FireServer(tyrCombo >= maxCombo and 0.9 or 0.4, tyrCombo)
 		end)
 		pcall(function()
 			registerHit:FireServer(unpack(hitData))
@@ -4654,6 +4722,10 @@ function TyrNormalAttack(duration, aimPart, lockPositionCF)
 				tool:Activate()
 			end)
 		end
+		pcall(function()
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+			VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+		end)
 		if getgenv().TyrantFastAttack then
 			pcall(getgenv().TyrantFastAttack)
 		end
@@ -6481,11 +6553,13 @@ function runRaceTrainingWork(trainingState, roleLabel)
     end
 
     local orbitHeight = math.max(10, tonumber(getgenv().Config["Trial Orbit Height"]) or 30)
+    AttackConfig.AutoClickEnabled = true
     equipTrialCombatTool()
 
     while not shouldStopTrainingCycle() do
         local mob = CheckMonster(table.unpack(mobNames))
         if not mob then
+            AttackConfig.AutoClickEnabled = true
             substatus("[" .. tostring(islandName) .. "] chờ mob spawn")
             status(roleLabel .. " [" .. tostring(islandName) .. "] waiting for mobs...")
             topos(getCurrentPos())
@@ -6504,6 +6578,7 @@ function runRaceTrainingWork(trainingState, roleLabel)
                     local energy = currentCharacter and currentCharacter:FindFirstChild("RaceEnergy")
                     local transformed = currentCharacter and currentCharacter:FindFirstChild("RaceTransformed")
                     if transformed and transformed.Value then
+                        AttackConfig.AutoClickEnabled = false
                         substatus("[" .. tostring(islandName) .. "] transform active")
                         status(roleLabel .. " [" .. tostring(islandName) .. "] wait transform end")
                         root = mob:FindFirstChild("HumanoidRootPart")
@@ -6511,6 +6586,7 @@ function runRaceTrainingWork(trainingState, roleLabel)
                             topos(getExtractOrbitTarget(root.CFrame, 150) or (root.CFrame * CFrame.new(0, 150, 0)))
                         end
                     else
+                        AttackConfig.AutoClickEnabled = true
                         local mobHp = humanoid and math.floor(humanoid.Health) or 0
                         substatus("[" .. tostring(islandName) .. "] " .. tostring(mob.Name) .. " " .. tostring(mobHp) .. "HP")
                         status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
@@ -6535,6 +6611,7 @@ function runRaceTrainingWork(trainingState, roleLabel)
         end
     end
 
+    AttackConfig.AutoClickEnabled = true
     invalidateV4Status()
     forceReassignIsland()
     isCurrentlyTraining = false
