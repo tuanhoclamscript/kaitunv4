@@ -194,22 +194,12 @@ function FireDamageToTargets(targets)
 	local hitList = {}
 	for _, enemy in ipairs(targets) do
 		if enemy and enemy.Parent then
-			local hitPart = enemy:FindFirstChild("Head")
-				or enemy:FindFirstChild("HumanoidRootPart")
-				or enemy:FindFirstChild("UpperTorso")
-				or enemy:FindFirstChild("Torso")
+			local part = enemy:FindFirstChild("HumanoidRootPart")
+				or enemy:FindFirstChild("Head")
 				or enemy.PrimaryPart
-			local hrp = enemy:FindFirstChild("HumanoidRootPart")
-				or enemy:FindFirstChild("UpperTorso")
-				or enemy:FindFirstChild("Torso")
-				or hitPart
-			if hitPart and hrp then
-				if not firstHit then
-					firstHit = hitPart
-				end
-				-- format: {entity, part} xen ke {}
-				hitList[#hitList + 1] = { enemy, hrp }
-				hitList[#hitList + 1] = {}
+			if part then
+				if not firstHit then firstHit = part end
+				hitList[#hitList + 1] = { enemy, part }
 			end
 		end
 	end
@@ -217,34 +207,34 @@ function FireDamageToTargets(targets)
 		return false
 	end
 
-	local combo = AttackInstance and AttackInstance:GetCombo() or 1
-	local cooldown = combo >= (AttackConfig.MaxCombo or 4) and 0.9 or 0.4
+	-- hitData layout: { firstHit, hitList } -> unpack -> FireServer(firstHit, hitList)
+	local hitData = { firstHit, hitList }
 
-	-- 1. RegisterAttack
+	-- 1. RegisterAttack (cooldown only, matching original AttackAll format)
 	pcall(function()
+		local cooldown = AttackConfig.AttackCooldown or 0.125
 		if RegisterAttack then
-			RegisterAttack:FireServer(cooldown, combo)
+			RegisterAttack:FireServer(cooldown)
 		end
 		local rawAttack = Net and Net:FindFirstChild("RE/RegisterAttack")
 		if rawAttack and rawAttack ~= RegisterAttack then
-			rawAttack:FireServer(cooldown, combo)
+			rawAttack:FireServer(cooldown)
 		end
 	end)
 
 	-- 2. RegisterHit
 	pcall(function()
 		if RegisterHit then
-			RegisterHit:FireServer(firstHit, hitList, nil, "078da5141")
+			RegisterHit:FireServer(unpack(hitData))
 		end
 		local rawHit = Net and Net:FindFirstChild("RE/RegisterHit")
 		if rawHit and rawHit ~= RegisterHit then
-			rawHit:FireServer(firstHit, hitList, nil, "078da5141")
+			rawHit:FireServer(unpack(hitData))
 		end
 	end)
 
 	-- 3. Encrypted remote pipeline
 	pcall(function()
-		local hitData = { firstHit, hitList, nil, "078da5141" }
 		FireEncryptedHit(hitData)
 	end)
 
@@ -4594,24 +4584,15 @@ function TyrLoadAttack()
 		if #targets == 0 then
 			return
 		end
-		local hitData = {
-			[1] = targets[1][2],
-			[2] = {},
-			[4] = "078da5141"
-		}
+		local firstPart = targets[1][2]
+		local hitList = {}
 		for _, target in ipairs(targets) do
-			hitData[2][#hitData[2] + 1] = {
-				target[1],
-				target[2]
-			}
+			hitList[#hitList + 1] = { target[1], target[2] }
 		end
+		local hitData = { firstPart, hitList }
 		pcall(function()
-			local maxCombo = AttackConfig.MaxCombo or 4
-			local resetTime = AttackConfig.ComboResetTime or 1.5
-			tyrCombo = (tick() - tyrComboDebounce) <= resetTime and tyrCombo or 0
-			tyrCombo = tyrCombo >= maxCombo and 1 or tyrCombo + 1
-			tyrComboDebounce = tick()
-			registerAttack:FireServer(tyrCombo >= maxCombo and 0.9 or 0.4, tyrCombo)
+			local cooldown = AttackConfig.AttackCooldown or 0.125
+			registerAttack:FireServer(cooldown)
 		end)
 		pcall(function()
 			registerHit:FireServer(unpack(hitData))
