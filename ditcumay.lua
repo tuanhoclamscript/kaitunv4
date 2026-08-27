@@ -189,11 +189,9 @@ function FireDamageToTargets(targets)
 	if not targets or #targets == 0 then
 		return false
 	end
-	local hitData = {
-		[1] = nil,
-		[2] = {},
-		[4] = "078da5141"
-	}
+
+	local firstHit = nil
+	local hitList = {}
 	for _, enemy in ipairs(targets) do
 		if enemy and enemy.Parent then
 			local hitPart = enemy:FindFirstChild("Head")
@@ -206,42 +204,47 @@ function FireDamageToTargets(targets)
 				or enemy:FindFirstChild("Torso")
 				or hitPart
 			if hitPart and hrp then
-				if not hitData[1] then
-					hitData[1] = hitPart
+				if not firstHit then
+					firstHit = hitPart
 				end
-				table.insert(hitData[2], { [1] = enemy, [2] = hrp })
-				table.insert(hitData[2], enemy)
+				-- format: {entity, part} xen ke {}
+				hitList[#hitList + 1] = { enemy, hrp }
+				hitList[#hitList + 1] = {}
 			end
 		end
 	end
-	if not hitData[1] or #hitData[2] == 0 then
+	if not firstHit or #hitList == 0 then
 		return false
 	end
 
-	-- 1. RegisterAttack: 0 cooldown
+	local combo = AttackInstance and AttackInstance:GetCombo() or 1
+	local cooldown = combo >= (AttackConfig.MaxCombo or 4) and 0.9 or 0.4
+
+	-- 1. RegisterAttack
 	pcall(function()
 		if RegisterAttack then
-			RegisterAttack:FireServer(0)
+			RegisterAttack:FireServer(cooldown, combo)
 		end
 		local rawAttack = Net and Net:FindFirstChild("RE/RegisterAttack")
 		if rawAttack and rawAttack ~= RegisterAttack then
-			rawAttack:FireServer(0)
+			rawAttack:FireServer(cooldown, combo)
 		end
 	end)
 
-	-- 2. RegisterHit: unpack(hitData)
+	-- 2. RegisterHit
 	pcall(function()
 		if RegisterHit then
-			RegisterHit:FireServer(unpack(hitData))
+			RegisterHit:FireServer(firstHit, hitList, nil, "078da5141")
 		end
 		local rawHit = Net and Net:FindFirstChild("RE/RegisterHit")
 		if rawHit and rawHit ~= RegisterHit then
-			rawHit:FireServer(unpack(hitData))
+			rawHit:FireServer(firstHit, hitList, nil, "078da5141")
 		end
 	end)
 
 	-- 3. Encrypted remote pipeline
 	pcall(function()
+		local hitData = { firstHit, hitList, nil, "078da5141" }
 		FireEncryptedHit(hitData)
 	end)
 
@@ -1800,35 +1803,8 @@ local function extractAttack()
 	if #targets == 0 then
 		return false
 	end
-
-	local firstHit = nil
-	local hitList = {}
-	for _, entity in ipairs(targets) do
-		local hitPart = entity:FindFirstChild("Head") or entity:FindFirstChild("HumanoidRootPart")
-		local entityRoot = entity:FindFirstChild("HumanoidRootPart")
-		if hitPart and entityRoot then
-			firstHit = firstHit or hitPart
-			-- Server doc hit list theo cap {entity, part} roi mot bang rong dem.
-			-- Day thang entity vao lam lech moi cap phia sau -> huy ca goi hit.
-			hitList[#hitList + 1] = { entity, entityRoot }
-			hitList[#hitList + 1] = {}
-		end
-	end
-	if not firstHit then
-		return false
-	end
-
-	-- RegisterAttack chi can mot lan cho moi goi hit, khong phai moi target.
-	local extractCombo = AttackInstance and AttackInstance:GetCombo() or 1
-	local extractCooldown = extractCombo >= (AttackConfig.MaxCombo or 4) and 0.9 or 0.4
-	pcall(function()
-		RegisterAttack:FireServer(extractCooldown, extractCombo)
-	end)
-	pcall(function()
-		RegisterHit:FireServer(firstHit, hitList, nil, "078da5141")
-	end)
 	lastExtractAttackAt = tick()
-	return true
+	return FireDamageToTargets(targets)
 end
 
 local extractAttackToken = {}
