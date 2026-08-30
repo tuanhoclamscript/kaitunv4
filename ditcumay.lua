@@ -1,6 +1,27 @@
+--[[
+    KAITUN DRACO MULTI-RACE PIPELINE - MASTER ENGINE (FULL PORT)
+    ============================================================
+    Orchestration FSM theo plan.md (tick 2.22s):
+      Buoc 0: Check FG -> marker + ServerData + doi toc ke tiep
+      Buoc 1: Beli < 2M -> Haunted Castle | Cyborg >= 5000 Frag -> Tyrant/Auto Raid
+      Buoc 2: Lay toc hiem (Ghoul V1 / Cyborg V1 / Roll Tort)
+      Buoc 3: V2 (Alchemist 3 hoa)
+      Buoc 4: V3 (Arowe + WebSocket PvP cho Angel/Ghoul)
+      Buoc 5: Mirage Night + Pull Lever
+      Buoc 6: Trial V4 (WS sync full moon) + Gear + Master Training -> FG
+
+    Port verbatim tu: v4.lua (tween/FastAttack/Tyrant/Raid/Trial/SmartTele/
+    Coordinator), ghoulv1.lua, uknow.lua (chest + safety lock), v3.lua,
+    ghoulv3.lua (PvP helper), data.lua (ServerData)
+]]
+
 local getgenv = (typeof(getgenv) == "function" and getgenv) or function() return _G end
+
+-- =====================================================================
+-- MODULE 0: CONFIG
+-- =====================================================================
 getgenv().Config = {
-    RacesToUpgrade = {"Cyborg"}, --  "Human", "Cyborg", "Ghoul", "Mink", "Fishman", "Skypiea" 
+    RacesToUpgrade = { "Human", "Cyborg", "Ghoul", "Mink", "Fishman", "Skypiea" },
     Team = "Pirates",
     AutoRollRace = true,
     CentralHubWS = "ws://13.75.105.170:20425/?token=ditnhaukhong",
@@ -21,8 +42,6 @@ getgenv().Config = {
     PvpRendezvous = CFrame.new(-1871.12, 45.86, 1362.31),
     -- An toan tuyet doi
     SafetyLockItems = { "Fist of Darkness", "Core Brain", "Hellfire Torch" },
-    -- API Hop Mirage Island
-    MirageApiUrl = "http://13.75.105.170/mirage",
 
     -- ==== Cac key theo dung ten v4.lua de port verbatim khong sua ====
     ["Farm Fragments"] = { autoraid = true, autotyrant = true },
@@ -138,6 +157,113 @@ local plr = Player
 local LocalPlayer = Player
 local USERNAME = Player.Name
 
+-- =====================================================================
+-- PERFORMANCE OPTIMIZATION (Luau best practices)
+--  - 1 pcall/phase, khong pcall tung object (pcall la function call + stack)
+--  - Lookup table theo ClassName thay cho chuoi IsA (IsA walk class hierarchy)
+--  - Cache Enum.ET ra local (global Enum la table lookup moi lan)
+--  - Quet chunked + task.wait() de khong khoa frame
+--  - CastShadow=false + tat ParticleEmitter/Trail/Beam (ke giu FPS chinh)
+--  - Texture/Decal -> Transparency=1 (an hoan toan, khong Destroy gay event)
+--  - Chay 1 lan, DescendantAdded xu ly instance moi stream ve sau
+-- =====================================================================
+do
+    local SOLID_CLASSES = {
+        Part = true, MeshPart = true, UnionOperation = true,
+        IntersectOperation = true, WedgePart = true, CornerWedgePart = true,
+        TrussPart = true, SpawnLocation = true,
+    }
+    local EFFECT_CLASSES = {
+        ParticleEmitter = true, Trail = true, Beam = true,
+        Smoke = true, Fire = true, Sparkles = true,
+    }
+    local KILL_CLASSES = {
+        ColorCorrectionEffect = true, SunRaysEffect = true, BlurEffect = true,
+        BloomEffect = true, DepthOfFieldEffect = true, Atmosphere = true,
+        Explosion = true,
+    }
+    local SMOOTH_PLASTIC = Enum.Material.SmoothPlastic
+
+    local function stripInstance(object)
+        local className = object.ClassName
+        if SOLID_CLASSES[className] then
+            object.CastShadow = false
+            object.Material = SMOOTH_PLASTIC
+            if className == "MeshPart" then
+                -- TextureID rong = khong phai sample texture GPU
+                object.TextureID = ""
+            end
+        elseif className == "Texture" or className == "Decal" then
+            object.Transparency = 1
+        elseif EFFECT_CLASSES[className] then
+            object.Enabled = false
+        elseif KILL_CLASSES[className] then
+            object:Destroy()
+        end
+    end
+
+    local function optimizeWorld()
+        if getgenv().__KAITUN_FPS_OPTIMIZED then
+            return
+        end
+        getgenv().__KAITUN_FPS_OPTIMIZED = true
+
+        task.spawn(function()
+            -- Cho game load (co timeout, khong tre han script)
+            local startedAt = tick()
+            while not game:IsLoaded() do
+                if tick() - startedAt > 15 then break end
+                task.wait(0.25)
+            end
+            task.wait(1)
+
+            pcall(function()
+                settings().Rendering.QualityLevel = 1
+                UserSettings():GetService("UserGameSettings").MasterVolume = 0
+                local StarterGui = game:GetService("StarterGui")
+                StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
+                StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+                StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+            end)
+
+            pcall(function()
+                Lighting.GlobalShadows = false
+                Lighting.FogEnd = 9e9
+                Lighting.EnvironmentDiffuseScale = 0
+                Lighting.EnvironmentSpecularScale = 0
+                local terrain = Workspace:FindFirstChildOfClass("Terrain")
+                if terrain then
+                    terrain.WaterWaveSize = 0
+                    terrain.WaterWaveSpeed = 0
+                    terrain.WaterReflectance = 0
+                    terrain.WaterTransparency = 1
+                    local clouds = terrain:FindFirstChildOfClass("Clouds")
+                    if clouds then clouds:Destroy() end
+                end
+            end)
+
+            -- Quet map theo lo 4000 instance, yield giua cac lo
+            pcall(function()
+                local count = 0
+                for _, object in ipairs(Workspace:GetDescendants()) do
+                    stripInstance(object)
+                    count = count + 1
+                    if count % 4000 == 0 then
+                        task.wait()
+                    end
+                end
+            end)
+
+            -- Instance sinh sau nay (skill effect, stream) cung bi strip
+            Workspace.DescendantAdded:Connect(function(object)
+                stripInstance(object)
+            end)
+        end)
+    end
+
+    optimizeWorld()
+end
+
 -- Temple of Time tu MapStash (v4.lua)
 pcall(function()
     local mapStash = ReplicatedStorage:WaitForChild("MapStash", 5)
@@ -189,6 +315,22 @@ local SEA1 = game.PlaceId == 2753915549 or game.PlaceId == 85211729168715
 local SEA2 = game.PlaceId == 4442272183 or game.PlaceId == 79091703265657
 local SEA3 = game.PlaceId == 7449423635 or game.PlaceId == 100117331123089
 
+-- Mapping PlaceId -> Sea (changefg.lua) — dung runtime lookup thay vi local
+-- bi freeze sau teleport (SEA1/SEA2/SEA3 khong cap nhat khi hop server)
+local PLACE_TO_SEA = {
+    [2753915549] = 1, [85211729168715] = 1,
+    [4442272183] = 2, [79091703265657] = 2,
+    [7449423635] = 3, [100117331123089] = 3,
+}
+
+function GetCurrentSea()
+    return tonumber(PLACE_TO_SEA[tostring(game.PlaceId)]) or PLACE_TO_SEA[game.PlaceId] or 0
+end
+
+function IsInSea(seaNumber)
+    return GetCurrentSea() == tonumber(seaNumber)
+end
+
 -- =====================================================================
 -- STATUS LOG (thay UI cua v4.lua)
 -- =====================================================================
@@ -239,18 +381,31 @@ local function setTweenNoclip(enabled)
         if tweenNoclipConnection then
             return
         end
+        -- Cache danh sach BasePart thay vi GetDescendants() moi frame
+        -- (tạo bang moi lan go + walk cay = rac GC + frame spike)
+        local cachedCharacter = nil
+        local cachedParts = nil
         tweenNoclipConnection = RunService.Stepped:Connect(function()
             local character = Player.Character
             if not character then
+                cachedCharacter = nil
+                cachedParts = nil
                 return
             end
-            for _, part in ipairs(character:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    if tweenCollisionStates[part] == nil then
-                        tweenCollisionStates[part] = part.CanCollide
+            if character ~= cachedCharacter or cachedParts == nil then
+                cachedCharacter = character
+                cachedParts = {}
+                for _, part in ipairs(character:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        cachedParts[#cachedParts + 1] = part
+                        if tweenCollisionStates[part] == nil then
+                            tweenCollisionStates[part] = part.CanCollide
+                        end
                     end
-                    part.CanCollide = false
                 end
+            end
+            for i = 1, #cachedParts do
+                cachedParts[i].CanCollide = false
             end
         end)
         return
@@ -6598,26 +6753,65 @@ local HauntedMobs = {
 	"Reborn Skeleton", "Living Zombie", "Demonic Soul", "Possessed Mummy"
 }
 
+-- Di chuyen giua cac Sea bang remote (changefg.lua):
+--   Sea1 -> Sea2 : CommF_:InvokeServer("TravelDressrosa")
+--   Sea2 -> Sea3 : CommF_:InvokeServer("TravelZou")
+-- Dung PLACE_TO_SEA runtime lookup (SEA1/SEA2/SEA3 local bi freeze sau teleport)
+local function waitForSeaChange(targetSea, timeout)
+	local deadline = tick() + (timeout or 20)
+	while tick() < deadline do
+		if GetCurrentSea() == targetSea then
+			return true
+		end
+		task.wait(0.5)
+	end
+	return GetCurrentSea() == targetSea
+end
+
 function TravelToSea3()
-	if SEA3 then return true end
-	if SEA1 then
-		pcall(function() CommF_:InvokeServer("TravelDressrosa") end)
-		task.wait(8)
+	if GetCurrentSea() == 3 then return true end
+	if GetCurrentSea() == 1 then
+		for _ = 1, 3 do
+			pcall(function() CommF_:InvokeServer("TravelDressrosa") end)
+			if waitForSeaChange(2, 12) then break end
+			task.wait(2)
+		end
 	end
-	if not SEA3 then
-		pcall(function() CommF_:InvokeServer("TravelZou") end)
-		task.wait(8)
+	if GetCurrentSea() == 2 then
+		for _ = 1, 3 do
+			pcall(function() CommF_:InvokeServer("TravelZou") end)
+			if waitForSeaChange(3, 12) then break end
+			task.wait(2)
+		end
 	end
-	return SEA3
+	return GetCurrentSea() == 3
 end
 
 function TravelToSea2()
-	if SEA2 then return true end
-	if SEA3 then
-		pcall(function() CommF_:InvokeServer("TravelDressrosa") end)
-		task.wait(8)
+	if GetCurrentSea() == 2 then return true end
+	if GetCurrentSea() == 3 then
+		for _ = 1, 3 do
+			pcall(function() CommF_:InvokeServer("TravelDressrosa") end)
+			if waitForSeaChange(2, 12) then break end
+			task.wait(2)
+		end
 	end
-	return SEA2
+	return GetCurrentSea() == 2
+end
+
+function TravelToSea1()
+	if GetCurrentSea() == 1 then return true end
+	if GetCurrentSea() == 3 then
+		TravelToSea2()
+	end
+	if GetCurrentSea() == 2 then
+		for _ = 1, 3 do
+			pcall(function() CommF_:InvokeServer("TravelDressrosa") end)
+			if waitForSeaChange(1, 12) then break end
+			task.wait(2)
+		end
+	end
+	return GetCurrentSea() == 1
 end
 
 local HAUNTED_CASTLE_POS = CFrame.new(-9530.61035, 200.860657, 5763.13477)
@@ -7127,114 +7321,11 @@ function HighestPoint(island)
 	return topPart
 end
 
-local function getServerBrowser()
-	return ReplicatedStorage:FindFirstChild("__ServerBrowser")
-		or (ReplicatedStorage:WaitForChild("__ServerBrowser", 3))
-end
-
-local function HopMirageServer()
-	local url = getgenv().Config.MirageApiUrl or "http://13.75.105.170/mirage"
-	local req = (syn and syn.request) or http_request or request or (fluxus and fluxus.request)
-	local body = nil
-	if req then
-		local res = req({ Url = url, Method = "GET" })
-		if res and res.Body then body = res.Body end
-	else
-		pcall(function() body = game:HttpGet(url) end)
-	end
-	if not body then return false end
-	local ok, list = pcall(function() return HttpService:JSONDecode(body) end)
-	if not ok or type(list) ~= "table" or #list == 0 then return false end
-
-	-- Lọc tất cả server có đảo Mirage, bỏ qua TimeOfDay (vì API có thể trả null)
-	local eligibleServers = {}
-	for _, server in ipairs(list) do
-		local jobId = tostring(server.JobId or "")
-		if jobId ~= "" and jobId ~= game.JobId then
-			local players = tonumber(server.Players)
-			-- Chấp nhận nếu players == nil hoặc players < 12 (tránh server full)
-			if not players or players < 12 then
-				table.insert(eligibleServers, server)
-			end
-		end
-	end
-
-	if #eligibleServers == 0 then
-		for _, server in ipairs(list) do
-			local jobId = tostring(server.JobId or "")
-			if jobId ~= "" and jobId ~= game.JobId then
-				table.insert(eligibleServers, server)
-			end
-		end
-	end
-
-	-- Thử hop tối đa 3 lần (3 server khác nhau) nếu gặp lỗi hoặc server full
-	local maxAttempts = math.min(3, #eligibleServers)
-	for attempt = 1, maxAttempts do
-		local targetServer = eligibleServers[attempt]
-		if targetServer then
-			local targetJobId = tostring(targetServer.JobId)
-			local placeId = readPlaceId(targetServer.PlaceId, 7449423635)
-			status(string.format("[Mirage Hop] Lần %d/3: Teleport qua __ServerBrowser -> %s (Players=%s)", attempt, targetJobId:sub(1, 8), tostring(targetServer.Players or "unknown")))
-
-			local tpOk = false
-			-- 1. Ưu tiên dùng Remote __ServerBrowser native của game để tránh lỗi
-			local sb = getServerBrowser()
-			if sb then
-				pcall(function()
-					sb:InvokeServer("teleport", targetJobId)
-					tpOk = true
-				end)
-			end
-
-			-- 2. Fallback sang TeleportService nếu __ServerBrowser không khả dụng
-			if not tpOk then
-				pcall(function()
-					TeleportService:TeleportToPlaceInstance(placeId, targetJobId, Players.LocalPlayer)
-					tpOk = true
-				end)
-			end
-
-			-- Theo dõi 7 giây xem có bị lỗi hoặc 'Server is full' không
-			local startWait = tick()
-			local failed = false
-			while tick() - startWait < 7 do
-				local overlay = CoreGui:FindFirstChild("RobloxPromptGui") and CoreGui.RobloxPromptGui:FindFirstChild("promptOverlay")
-				if overlay and overlay:FindFirstChild("ErrorPrompt") then
-					local msg = overlay.ErrorPrompt:FindFirstChild("MessageArea")
-						and overlay.ErrorPrompt.MessageArea:FindFirstChild("ErrorFrame")
-						and overlay.ErrorPrompt.MessageArea.ErrorFrame:FindFirstChild("ErrorMessage")
-					local text = msg and msg.Text or ""
-					if string.find(text:lower(), "full") or string.find(text:lower(), "unable") or string.find(text:lower(), "error") then
-						status("[Mirage Hop] Server " .. targetJobId:sub(1, 8) .. " bị full/lỗi -> Thử server tiếp theo...")
-						failed = true
-						pcall(function()
-							local GuiService = game:GetService("GuiService")
-							GuiService:ClearError()
-						end)
-						break
-					end
-				end
-				task.wait(0.5)
-			end
-
-			if not failed and tpOk then
-				return true
-			end
-			task.wait(1)
-		end
-	end
-	return false
-end
-
 function MirageNightBlueGear()
-	-- 1. Hoàn thành đối thoại Sealed King (talktoonggianaodo) trước
-	talktoonggianaodo()
-
-	-- 2. Kiểm tra nếu đảo Mirage đang có trong server hiện tại
-	local island = Workspace.Map:FindFirstChild("MysticIsland")
-	if island then
-		if isnight() then
+	-- CHI CAN BAN DEM (khong can Full Moon)
+	while not getBlueGear() do
+		local island = Workspace.Map:FindFirstChild("MysticIsland")
+		if island and isnight() then
 			local top = HighestPoint(island)
 			if top then
 				topos(top.CFrame * CFrame.new(0, 5, 0))
@@ -7249,19 +7340,10 @@ function MirageNightBlueGear()
 			local bg = getBlueGear()
 			if bg then
 				topos(bg.CFrame)
-				task.wait(2)
 			end
-		else
-			status("[Mirage] Có đảo Mirage trong server nhưng đang ban ngày -> Chờ tối")
-			task.wait(3)
-		end
-	else
-		-- 3. Không có đảo Mirage trong server -> Gọi API hop server tìm đảo Mirage
-		status("[Mirage] Server không có đảo Mirage -> Đang tìm server từ API...")
-		local hopped = HopMirageServer()
-		if not hopped then
 			task.wait(5)
 		end
+		task.wait(1)
 	end
 	return CheckTool("Blue Gear")
 end
@@ -7449,21 +7531,24 @@ task.spawn(function()
 	end
 end)
 
--- Team setup
+-- Team setup (changefg.lua: repeat SetTeam until Team + wait Character)
 task.spawn(function()
-	while not Player.Team do
-		pcall(function()
+	pcall(function()
+		repeat
 			CommF_:InvokeServer("SetTeam", getgenv().Config.Team)
-		end)
-		task.wait(1)
-	end
+			task.wait(1)
+		until Player.Team
+		repeat task.wait() until Player.Character
+	end)
 end)
 
--- Tu dong sang Sea 2 khi o Sea 1
+-- Tu dong sang Sea 2 khi o Sea 1 (runtime check, khong bi freeze sau teleport)
 task.spawn(function()
 	while task.wait(5) do
 		pcall(function()
-			if SEA1 then CommF_:InvokeServer("TravelDressrosa") end
+			if GetCurrentSea() == 1 then
+				CommF_:InvokeServer("TravelDressrosa")
+			end
 		end)
 	end
 end)
